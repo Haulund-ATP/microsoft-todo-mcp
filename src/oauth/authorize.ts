@@ -69,6 +69,19 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
   }
 
   const csrfToken = issueCsrfToken(res);
+  // The consent form both posts to (same-origin) and — on approval — is
+  // redirected by the server to the client's redirect_uri, which is
+  // virtually never same-origin (ChatGPT/Claude/etc. all live elsewhere).
+  // CSP3's form-action restricts that follow-up redirect too, so the
+  // default helmet `form-action 'self'` would block every real client.
+  // redirect_uri was already validated above against this exact client's
+  // registered list, so it's safe to widen form-action to that one origin
+  // for this specific response only.
+  const redirectOrigin = new URL(params.redirect_uri).origin;
+  res.set(
+    "Content-Security-Policy",
+    `default-src 'self'; base-uri 'self'; form-action 'self' ${redirectOrigin}; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'`
+  );
   res.set("Content-Type", "text/html; charset=utf-8");
   res.send(renderConsentPage(client.clientName, params, csrfToken));
 });

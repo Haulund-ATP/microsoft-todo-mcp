@@ -29,7 +29,7 @@
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@modelcontextprotocol/sdk": "^1.11.0",
     "@azure/msal-node": "^2.16.2",
-    "jose": "^5.9.6",
+    "jose": "^6.2.4",
     "express": "^4.21.2",
     "cookie-signature": "^1.2.2",
     "cookie-parser": "^1.4.7",

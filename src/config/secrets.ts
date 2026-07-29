@@ -17,8 +17,14 @@ export class SecretStore {
   private readonly cache = new Map<string, string>();
 
   constructor(vaultUri?: string) {
-    const uri = vaultUri ?? loadEnv().AZURE_KEY_VAULT_URI;
-    this.client = new SecretClient(uri, new DefaultAzureCredential());
+    const env = loadEnv();
+    const uri = vaultUri ?? env.AZURE_KEY_VAULT_URI;
+    const credential = new DefaultAzureCredential(
+      env.AZURE_CLIENT_ID_MANAGED_IDENTITY
+        ? { managedIdentityClientId: env.AZURE_CLIENT_ID_MANAGED_IDENTITY }
+        : undefined
+    );
+    this.client = new SecretClient(uri, credential);
   }
 
   async getSecret(name: string): Promise<string> {

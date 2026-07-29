@@ -16,12 +16,21 @@ function accountUrl(kind: "table" | "blob"): string {
   return `https://${name}.${kind}.core.windows.net`;
 }
 
+function managedIdentityCredential(): DefaultAzureCredential {
+  const env = loadEnv();
+  return new DefaultAzureCredential(
+    env.AZURE_CLIENT_ID_MANAGED_IDENTITY
+      ? { managedIdentityClientId: env.AZURE_CLIENT_ID_MANAGED_IDENTITY }
+      : undefined
+  );
+}
+
 export function getBlobServiceClient(): BlobServiceClient {
   const env = loadEnv();
   if (env.AZURE_STORAGE_CONNECTION_STRING && env.NODE_ENV !== "production") {
     return BlobServiceClient.fromConnectionString(env.AZURE_STORAGE_CONNECTION_STRING);
   }
-  return new BlobServiceClient(accountUrl("blob"), new DefaultAzureCredential());
+  return new BlobServiceClient(accountUrl("blob"), managedIdentityCredential());
 }
 
 export function getTableServiceClient(): TableServiceClient {
@@ -29,7 +38,7 @@ export function getTableServiceClient(): TableServiceClient {
   if (env.AZURE_STORAGE_CONNECTION_STRING && env.NODE_ENV !== "production") {
     return TableServiceClient.fromConnectionString(env.AZURE_STORAGE_CONNECTION_STRING);
   }
-  return new TableServiceClient(accountUrl("table"), new DefaultAzureCredential());
+  return new TableServiceClient(accountUrl("table"), managedIdentityCredential());
 }
 
 export function getTableClient(tableName: string): TableClient {
@@ -37,7 +46,7 @@ export function getTableClient(tableName: string): TableClient {
   if (env.AZURE_STORAGE_CONNECTION_STRING && env.NODE_ENV !== "production") {
     return TableClient.fromConnectionString(env.AZURE_STORAGE_CONNECTION_STRING, tableName);
   }
-  return new TableClient(accountUrl("table"), tableName, new DefaultAzureCredential());
+  return new TableClient(accountUrl("table"), tableName, managedIdentityCredential());
 }
 
 export const TABLE_NAMES = {

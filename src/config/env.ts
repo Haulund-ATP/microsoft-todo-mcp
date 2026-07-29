@@ -24,6 +24,12 @@ const envSchema = z.object({
 
   AZURE_KEY_VAULT_URI: z.string().url(),
 
+  // Client id of the user-assigned managed identity the Container App runs
+  // as. DefaultAzureCredential's ManagedIdentityCredential requires this to
+  // be passed explicitly for user-assigned identities — without it, IMDS
+  // has no way to disambiguate and authentication fails at startup.
+  AZURE_CLIENT_ID_MANAGED_IDENTITY: z.string().min(1).optional(),
+
   AZURE_STORAGE_ACCOUNT_NAME: z.string().min(1).optional(),
   AZURE_STORAGE_CONNECTION_STRING: z.string().optional(),
 

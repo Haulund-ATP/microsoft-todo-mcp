@@ -19,4 +19,12 @@ module.exports = {
     '@typescript-eslint/no-explicit-any': 'warn',
     'no-console': 'warn',
   },
+  overrides: [
+    {
+      files: ['scripts/**/*.ts'],
+      rules: {
+        'no-console': 'off',
+      },
+    },
+  ],
 };

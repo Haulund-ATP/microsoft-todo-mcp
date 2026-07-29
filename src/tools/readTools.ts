@@ -75,6 +75,33 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
   );
 
   server.registerTool(
+    "get_task_with_checklist",
+    {
+      title: "Get task with checklist",
+      description:
+        "Fetches a task together with its full checklist and parent-list metadata in a single call, always with " +
+        "fresh Graph reads (list, task, and checklistItems are each fetched live — nothing is cached). Useful for " +
+        "verifying actual server-side state, e.g. across two accounts on a shared list.",
+      inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    },
+    async ({ list_id, task_id, connection_id }) =>
+      runGraphTool(ctx, "get_task_with_checklist", connection_id, async (client) => {
+        const [list, task, checklist] = await Promise.all([
+          todo.getTaskList(client, list_id),
+          todo.getTask(client, list_id, task_id),
+          todo.listChecklistItems(client, list_id, task_id),
+        ]);
+        return {
+          list: { id: list.id, displayName: list.displayName, isOwner: list.isOwner, isShared: list.isShared },
+          task: { id: task.id, title: task.title, status: task.status, etag: task.etag, lastModifiedDateTime: task.lastModifiedDateTime },
+          checklist,
+          checklistCount: checklist.length,
+        };
+      })
+  );
+
+  server.registerTool(
     "search_tasks",
     {
       title: "Search tasks",

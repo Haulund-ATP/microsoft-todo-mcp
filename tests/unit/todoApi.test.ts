@@ -133,6 +133,49 @@ describe("todoApi request shape — field-scoped writes only", () => {
     const postCall = calls.find((c) => c.method === "post")!;
     expect(postCall.body).toEqual({ title: "bare task", importance: "normal" });
   });
+
+  it("createTask converts a plain-text body to escaped HTML, preserving line breaks", async () => {
+    const { client, calls } = makeFakeClient({ "/me/todo/lists/L/tasks": { id: "T" } });
+    await todo.createTask(client, "L", { title: "t", body: "line one\nline <two> & \"three\"" });
+
+    const postCall = calls.find((c) => c.method === "post")!;
+    expect((postCall.body as { body: unknown }).body).toEqual({
+      content: "line one<br>line &lt;two&gt; &amp; &quot;three&quot;",
+      contentType: "html",
+    });
+  });
+
+  it("updateTask converts a plain-text body to escaped HTML the same way as createTask", async () => {
+    const { client, calls } = makeFakeClient({ "/me/todo/lists/L/tasks/T": { id: "T" } });
+    await todo.updateTask(client, "L", "T", { body: "a & b" });
+
+    const patchCall = calls.find((c) => c.method === "patch")!;
+    expect((patchCall.body as { body: unknown }).body).toEqual({ content: "a &amp; b", contentType: "html" });
+  });
+
+  it("mapTask captures @odata.etag as TaskItem.etag", async () => {
+    const { client } = makeFakeClient({
+      "/me/todo/lists/L/tasks/T": {
+        id: "T",
+        title: "x",
+        "@odata.etag": 'W/"abc123=="',
+        lastModifiedDateTime: "2026-01-01T00:00:00Z",
+      },
+    });
+    const task = await todo.getTask(client, "L", "T");
+    expect(task.etag).toBe('W/"abc123=="');
+    expect(task.lastModifiedDateTime).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("updateChecklistItem builds an explicit PATCH payload with no undefined-valued keys", async () => {
+    const { client, calls } = makeFakeClient({
+      "/me/todo/lists/L/tasks/T/checklistItems/item-1": { id: "item-1", displayName: "A", isChecked: true },
+    });
+    await todo.updateChecklistItem(client, "L", "T", "item-1", { isChecked: true });
+
+    const patchCall = calls.find((c) => c.method === "patch")!;
+    expect(Object.keys(patchCall.body as object)).toEqual(["isChecked"]);
+  });
 });
 
 /**

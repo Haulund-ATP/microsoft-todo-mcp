@@ -23,6 +23,7 @@ export interface LogFields {
   httpMethod?: string;
   httpStatusCode?: number;
   /** Opaque Graph resource identifiers — never the title/displayName/body they point at. */
+  connectionId?: string;
   taskListId?: string;
   taskId?: string;
   checklistItemId?: string;
@@ -30,6 +31,16 @@ export interface LogFields {
   graphMethod?: string;
   isSharedList?: boolean;
   isListOwner?: boolean;
+  /** Diagnostics for the shared-list checklist-write investigation — see docs/security.md. */
+  taskEtag?: string;
+  taskLastModifiedDateTime?: string;
+  checklistCountBefore?: number;
+  checklistCountAfter?: number;
+  verificationStatus?: "verified" | "delayed" | "inconsistent";
+  missingItemIds?: string[];
+  graphRequestId?: string;
+  graphClientRequestId?: string;
+  fieldsSent?: string[];
 }
 
 const REDACT_PATHS = [

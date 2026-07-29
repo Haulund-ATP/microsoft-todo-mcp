@@ -86,64 +86,88 @@ connectors they control. The primary threats considered:
   since the whole point is public reachability for ChatGPT/Claude's own
   infrastructure to call in; consider this if your threat model changes.
 
-## Known data-integrity risk: checklist items on shared, non-owned lists
+## Checklist items on shared lists: read-after-write verification, not a write block
 
-**Symptom (reported and reproduced):** on a Microsoft To Do list that is
-*shared* and *not owned* by the connected account (`isOwner: false`),
-checklist items added or updated via `add_checklist_item`/
-`update_checklist_item` were later observed missing, and the parent task's
-`body` reset to blank — both triggered by an unrelated, later edit (by any
-participant, including via this server itself) to the same task.
+**Symptom originally reported:** on a Microsoft To Do list that is *shared*
+and *not owned* by the connected account (`isOwner: false`), checklist items
+added or updated via `add_checklist_item`/`update_checklist_item` were later
+observed missing, and the parent task's `body` reset to blank.
 
-**Root-cause investigation (2026-07-29):** the request shapes this server
-sends were audited line by line against the current Microsoft Graph API
-reference:
+**2026-07-29 investigation, round 1 (superseded):** an earlier version of
+this document concluded this was a Microsoft-backend sync issue, based on
+the request shapes this server sends and independent forum reports, and
+shipped a mitigation that blocked `add_checklist_item`/`update_checklist_item`/
+`delete_checklist_item` on any shared, non-owned list unless the caller
+passed `acknowledge_shared_list_risk: true`. That conclusion and that
+mitigation were both wrong in scope:
 
-- `updateTask`/`completeTask`/`reopenTask` PATCH only the fields explicitly
-  provided (`src/graph/todoApi.ts`) — never `checklistItems`, and never
-  `body` unless the caller passed one.
-- `add_checklist_item`/`update_checklist_item`/`delete_checklist_item` only
-  ever call the dedicated `.../checklistItems` (or `.../checklistItems/{id}`)
-  sub-resource endpoint — never the parent task endpoint.
-- Per Microsoft's own [`todoTask` resource reference](https://learn.microsoft.com/en-us/graph/api/resources/todotask),
-  `checklistItems` is a **navigation property** (a separate child
-  resource collection), not an inline field — a PATCH to the task itself
-  cannot touch it even in principle.
-- Per the [`checklistItem` resource reference](https://learn.microsoft.com/en-us/graph/api/resources/checklistitem),
-  there is no ETag, `cTag`, or version field on this resource for this
-  server to have mishandled — the API exposes none.
-- These request-shape properties are locked in as regression tests in
-  `tests/unit/todoApi.test.ts`.
+- The "no ETag on todoTask" claim was **factually incorrect** — Graph's own
+  documented response example for updating a task
+  (https://learn.microsoft.com/en-us/graph/api/todotask-update) shows
+  `"@odata.etag": "W/\"...\""` on the response. The earlier check only read
+  the resource's "Properties" table, which omits OData protocol annotations
+  like `@odata.etag` — it never inspected an actual response. This is now
+  captured on every task read (`TaskItem.etag`, `src/graph/todoApi.ts`).
+- Blocking writes on every shared, non-owned list made a core use case of
+  this tool — shared lists — unusable without an extra opt-in flag on every
+  call, based on forum reports rather than a reproduction against this
+  server's own code paths.
+- checklistItem responses, by contrast, are confirmed (via the documented
+  create-response example) to carry no `@odata.etag` or
+  `lastModifiedDateTime` — only `@odata.context`, `displayName`,
+  `createdDateTime`, `isChecked`, `id`. That part of the original finding
+  held up under the same actual-response check.
 
-No bug was found in how this server constructs Graph requests. Multiple
-independent, longstanding user reports (e.g. on
-[Microsoft Q&A](https://learn.microsoft.com/en-us/answers/questions/5219543/microsoft-to-do-shared-list-is-not-syncing))
-describe shared Microsoft To Do lists losing data or falling out of sync
-across participants — Microsoft To Do's shared-list backend (built on
-Exchange Online, per Microsoft's own To Do API overview) has a
-long-documented history of this class of issue, independent of any
-specific client. The symptom pattern here (checklist items *and* body both
-reset together, triggered by a subsequent unrelated edit) is consistent
-with a **server-side full-task resync overwriting a stale replica**,
-which no client-side request-shaping can prevent or detect — the API
-gives no version/ETag signal to guard against it.
+**Current approach:** normal checklist and task writes — `create_task`,
+`update_task`, `complete_task`, `reopen_task`, `add_checklist_item`,
+`update_checklist_item`, `delete_checklist_item` — work unconditionally on
+shared lists, regardless of ownership. There is no `isOwner` gate and no
+required acknowledgement flag. Instead:
 
-**Mitigation implemented pending a Microsoft-side fix:** `add_checklist_item`,
-`update_checklist_item`, and `delete_checklist_item` now call
-`getTaskList` first and refuse to proceed (`shared_list_write_blocked`
-error) when the target list is shared and not owned by the current
-connection, unless the caller explicitly passes
-`acknowledge_shared_list_risk: true` (see `src/tools/sharedListGuard.ts`).
-This does not fix the underlying Microsoft-side risk — it stops the tool
-from silently returning "success" on writes that Microsoft's sync may
-later discard, and requires explicit, informed opt-in instead.
+- Every checklist write (`add_checklist_item`/`update_checklist_item`/
+  `delete_checklist_item`) re-reads the full checklist afterward
+  (`src/graph/verification.ts`) with a few short, bounded retries, and
+  returns a `verificationStatus` of `verified`, `delayed`, or `inconsistent`
+  alongside the fresh checklist, its count, and the task's `etag`/
+  `lastModifiedDateTime`. An `inconsistent` result never triggers an
+  automatic retry of the write, an automatic replacement item, or deletion
+  of anything else — it's surfaced as a warning with the observed item IDs
+  so the caller (and the human on the other end) can decide what to do.
+- `update_task`/`complete_task`/`reopen_task` read the checklist immediately
+  before and after the task-level operation and report whether any
+  previously-visible checklist item IDs went missing, without blocking the
+  operation or attempting any reconstruction.
+- Every Graph call carries a generated `client-request-id` and
+  `return-client-request-id: true` (`src/graph/diagnostics.ts`), and the
+  Graph-assigned `request-id` (when returned) is captured for diagnostic
+  logging — so a genuine Microsoft-side inconsistency can be pinpointed by
+  request ID rather than inferred from a forum thread.
+- `get_task_with_checklist` (`src/tools/readTools.ts`) always performs fresh
+  Graph reads (list + task + checklist, never cached) so a caller — or a
+  second participant on the same shared list — can independently confirm
+  actual server-side state.
 
-**If you hit this:** avoid checklist-item writes (from this server or any
-other client) on shared lists you don't own where possible; prefer
-per-person lists with `linkedResource`/task-level sharing instead of
-relying on shared-list sync for anything you can't afford to lose. Use the
-`list_checklist_items` read tool to verify actual server-side state before
-and after any write, rather than trusting a write's own success response.
+**Root-cause status:** no bug has been found in how this server constructs
+Graph requests for task or checklist operations (see the field-scoping
+regression tests in `tests/unit/todoApi.test.ts`) — every write is scoped to
+exactly the resource it targets and never touches an unrelated one. Whether
+Microsoft's shared-list backend itself drops checklist items has **not**
+been proven or disproven here: doing so requires two real Microsoft accounts
+sharing a list, both reading the same task directly via Graph after a write,
+which is outside what a single-account deployment/investigation can verify
+end-to-end. `scripts/live-checklist-test.ts` is an opt-in, single-account
+live check that exercises the same request/verification path against a real,
+dedicated test list — see "Live checklist verification" in
+`docs/operations.md` for how to run it, and for the two-account manual
+procedure if a second participant is available to compare notes.
+
+**If you observe a discrepancy:** use `get_task_with_checklist` from both
+sides (or `list_checklist_items` plus `get_task`) to capture each account's
+own Graph view, note the `verificationStatus` and any `graphRequestId`
+values logged for the write in question, and compare — per the classification
+rule above, only attribute it to Microsoft's backend if the writer's own
+fresh Graph read is correct while a different participant's fresh Graph read
+(not a To Do client's cached view) disagrees.
 
 ## Logging redaction
 

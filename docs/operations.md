@@ -69,27 +69,59 @@ live tailing, or `az containerapp logs show` for a recent window.
 4. When in doubt, use the "Reauth" action on `/accounts` — it re-runs the
    Microsoft sign-in and updates the connection in place.
 
-## Manual verification: shared-list checklist behavior (requires two real accounts)
+## Live checklist verification
 
-`tests/unit/todoApi.test.ts` and `tests/unit/sharedListGuard.test.ts` cover
-everything that can be verified against a mocked Graph client: request
-shapes, field-scoping, and the shared-list write guard. They cannot
-reproduce Microsoft's own shared-list sync behavior between two real
-participants — that requires two real Microsoft accounts sharing a real
-list, which can't be automated in CI without live credentials. See
-`docs/security.md` for the known-risk writeup. To manually verify:
+`tests/unit/todoApi.test.ts`, `tests/unit/verification.test.ts`, and
+`tests/unit/diagnostics.test.ts` cover everything that can be verified
+against a mocked Graph client: request shapes, field-scoping, PATCH-payload
+construction, read-after-write verification logic (verified/delayed/
+inconsistent), and per-call diagnostics. None of these can reproduce
+Microsoft's own shared-list sync behavior between real participants, or
+prove/disprove a Microsoft-side data-loss bug — see `docs/security.md` for
+the current root-cause status and classification rule.
+
+### Single-account live test (opt-in, not run in CI)
+
+`scripts/live-checklist-test.ts` exercises the real, deployed request path
+end-to-end against one real, already-connected Microsoft account and one
+dedicated test list it creates itself (never an existing list). It creates a
+task, adds three checklist items, updates the task title, completes and
+reopens the task, updates one checklist item, and verifies after each step
+that the expected items are still present — logging each step's
+`verificationStatus` and any Graph `request-id` captured. It deletes the test
+list when done, whether or not the run passed.
+
+Requires the same environment/credentials as the running server (Key Vault,
+Table Storage) — run it from a shell where `loadEnv()` already succeeds, or
+via `az containerapp exec`:
+
+```powershell
+npm run test:live-checklist -- --connection-id <connectionId>
+```
+
+This is **not** part of `npm test` (vitest is configured to only pick up
+`tests/unit/**`) and must not be added to any CI pipeline that runs against
+production data — it's a manual diagnostic tool.
+
+### Manual two-account cross-check (optional, no credential access required)
+
+If a second Microsoft account/participant on the same shared list is
+available, they can independently confirm what they see **without** being
+given any credentials or taking part in fixing anything — this is a
+read-only comparison, not a prerequisite for the tool to work:
 
 1. Share a Microsoft To Do list from Account A to Account B (in the To Do
    app, not via this server).
-2. Connect Account A here, bind a profile, `add_checklist_item` twice on a
-   task in the shared list (pass `acknowledge_shared_list_risk: true`).
-3. `list_checklist_items` — confirm both are present.
-4. In the To Do app as Account B, add a third checklist item manually.
-5. `list_checklist_items` again as Account A — confirm all three are
-   present (this is the step known to sometimes fail due to Microsoft's
-   sync — if it does, that's the documented known risk, not this server).
-6. Repeat with the write coming from Account B and the read from Account A
-   to check the reverse direction.
+2. From Account A's connection, call `get_task_with_checklist` on a task in
+   that list (or run the live test above against it) — note the returned
+   `task.etag`, `task.lastModifiedDateTime`, and checklist item IDs.
+3. Ask the Account B participant to open the same task in the To Do app (or,
+   if they also have a connection to this server, call
+   `get_task_with_checklist` themselves) and report what they see.
+4. Compare: if Account A's own fresh Graph read is correct but Account B's
+   fresh Graph read (not just their To Do client's cached view) disagrees,
+   that points at Microsoft's shared-list backend rather than this server —
+   see the classification rule in `docs/security.md`.
 
 ## Known TODOs left for a human / live-Azure step
 

@@ -28,6 +28,17 @@ export interface TaskItem {
   completedDateTime?: DisplayableDateTime;
   createdDateTime?: string;
   lastModifiedDateTime?: string;
+  /**
+   * Captured from the Graph response's `@odata.etag` annotation. Confirmed
+   * present on todoTask responses via the official example at
+   * https://learn.microsoft.com/en-us/graph/api/todotask-update (the
+   * "Properties" table on the todoTask resource page omits it, since it's an
+   * OData protocol annotation rather than a named entity property — that
+   * omission is what led to it being wrongly assumed absent previously).
+   * Used for diagnostics only; If-Match/optimistic-concurrency support has
+   * not been verified and must not be assumed.
+   */
+  etag?: string;
 }
 
 export interface ChecklistItem {
@@ -37,11 +48,35 @@ export interface ChecklistItem {
   createdDateTime?: string;
   /**
    * Set only once the item is checked off. This is the only
-   * "last changed" signal the Graph checklistItem resource exposes — there
-   * is no lastModifiedDateTime or ETag on this resource (confirmed against
-   * https://learn.microsoft.com/en-us/graph/api/resources/checklistitem).
+   * "last changed" signal the Graph checklistItem resource exposes — the
+   * documented example response
+   * (https://learn.microsoft.com/en-us/graph/api/todotask-post-checklistitems)
+   * shows only `@odata.context`, `displayName`, `createdDateTime`,
+   * `isChecked`, `id` — no `@odata.etag` or `lastModifiedDateTime`, unlike
+   * todoTask. Verified against the actual response example, not just the
+   * resource's "Properties" table.
    */
   checkedDateTime?: string;
+}
+
+/**
+ * Microsoft's current todoTask-update reference documents the `body`
+ * property as: "Note that only HTML type is supported." (the response
+ * example on the same page still shows `contentType: "text"` for a task
+ * created before that note was added, which is why this wasn't caught
+ * earlier — Graph accepts "text" without error but the docs say new writes
+ * should use HTML). Plain text is escaped and newlines converted to `<br>`
+ * so the caller's text renders unchanged; no semantic change to the text
+ * itself.
+ */
+function textToHtmlBody(content: string): { content: string; contentType: "html" } {
+  const escaped = content
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  return { content: escaped.replace(/\r\n|\r|\n/g, "<br>"), contentType: "html" };
 }
 
 function mapTaskList(raw: Record<string, unknown>): TaskList {
@@ -66,6 +101,7 @@ function mapTask(raw: Record<string, unknown>): TaskItem {
     completedDateTime: fromGraphDateTimeTimeZone(raw.completedDateTime as never),
     createdDateTime: raw.createdDateTime as string | undefined,
     lastModifiedDateTime: raw.lastModifiedDateTime as string | undefined,
+    etag: raw["@odata.etag"] as string | undefined,
   };
 }
 
@@ -144,7 +180,7 @@ export async function createTask(client: Client, listId: string, input: CreateTa
     title: input.title,
     importance: input.importance ?? "normal",
   };
-  if (input.body) payload.body = { content: input.body, contentType: "text" };
+  if (input.body) payload.body = textToHtmlBody(input.body);
   if (input.dueDateTime) payload.dueDateTime = toGraphDateTimeTimeZone(input.dueDateTime, input.timeZone);
   if (input.reminderDateTime) {
     payload.reminderDateTime = toGraphDateTimeTimeZone(input.reminderDateTime, input.timeZone);
@@ -169,7 +205,7 @@ export interface UpdateTaskInput {
 export async function updateTask(client: Client, listId: string, taskId: string, input: UpdateTaskInput): Promise<TaskItem> {
   const payload: Record<string, unknown> = {};
   if (input.title !== undefined) payload.title = input.title;
-  if (input.body !== undefined) payload.body = { content: input.body, contentType: "text" };
+  if (input.body !== undefined) payload.body = textToHtmlBody(input.body);
   if (input.importance !== undefined) payload.importance = input.importance;
   if (input.status !== undefined) payload.status = input.status;
   if (input.dueDateTime !== undefined) {
@@ -224,12 +260,15 @@ export async function updateChecklistItem(
   itemId: string,
   patch: { displayName?: string; isChecked?: boolean }
 ): Promise<ChecklistItem> {
+  const payload: Record<string, unknown> = {};
+  if (patch.displayName !== undefined) payload.displayName = patch.displayName;
+  if (patch.isChecked !== undefined) payload.isChecked = patch.isChecked;
   await withThrottleRetry(() =>
     client
       .api(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}/checklistItems/${encodeURIComponent(itemId)}`
       )
-      .patch(patch)
+      .patch(payload)
   );
   const raw = await withThrottleRetry(() =>
     client

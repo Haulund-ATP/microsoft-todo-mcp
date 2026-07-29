@@ -69,6 +69,28 @@ live tailing, or `az containerapp logs show` for a recent window.
 4. When in doubt, use the "Reauth" action on `/accounts` — it re-runs the
    Microsoft sign-in and updates the connection in place.
 
+## Manual verification: shared-list checklist behavior (requires two real accounts)
+
+`tests/unit/todoApi.test.ts` and `tests/unit/sharedListGuard.test.ts` cover
+everything that can be verified against a mocked Graph client: request
+shapes, field-scoping, and the shared-list write guard. They cannot
+reproduce Microsoft's own shared-list sync behavior between two real
+participants — that requires two real Microsoft accounts sharing a real
+list, which can't be automated in CI without live credentials. See
+`docs/security.md` for the known-risk writeup. To manually verify:
+
+1. Share a Microsoft To Do list from Account A to Account B (in the To Do
+   app, not via this server).
+2. Connect Account A here, bind a profile, `add_checklist_item` twice on a
+   task in the shared list (pass `acknowledge_shared_list_risk: true`).
+3. `list_checklist_items` — confirm both are present.
+4. In the To Do app as Account B, add a third checklist item manually.
+5. `list_checklist_items` again as Account A — confirm all three are
+   present (this is the step known to sometimes fail due to Microsoft's
+   sync — if it does, that's the documented known risk, not this server).
+6. Repeat with the write coming from Account B and the read from Account A
+   to check the reverse direction.
+
 ## Known TODOs left for a human / live-Azure step
 
 - **Exact managed-identity RBAC role assignment propagation timing**: role

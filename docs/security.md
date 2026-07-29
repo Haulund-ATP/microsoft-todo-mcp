@@ -86,6 +86,65 @@ connectors they control. The primary threats considered:
   since the whole point is public reachability for ChatGPT/Claude's own
   infrastructure to call in; consider this if your threat model changes.
 
+## Known data-integrity risk: checklist items on shared, non-owned lists
+
+**Symptom (reported and reproduced):** on a Microsoft To Do list that is
+*shared* and *not owned* by the connected account (`isOwner: false`),
+checklist items added or updated via `add_checklist_item`/
+`update_checklist_item` were later observed missing, and the parent task's
+`body` reset to blank — both triggered by an unrelated, later edit (by any
+participant, including via this server itself) to the same task.
+
+**Root-cause investigation (2026-07-29):** the request shapes this server
+sends were audited line by line against the current Microsoft Graph API
+reference:
+
+- `updateTask`/`completeTask`/`reopenTask` PATCH only the fields explicitly
+  provided (`src/graph/todoApi.ts`) — never `checklistItems`, and never
+  `body` unless the caller passed one.
+- `add_checklist_item`/`update_checklist_item`/`delete_checklist_item` only
+  ever call the dedicated `.../checklistItems` (or `.../checklistItems/{id}`)
+  sub-resource endpoint — never the parent task endpoint.
+- Per Microsoft's own [`todoTask` resource reference](https://learn.microsoft.com/en-us/graph/api/resources/todotask),
+  `checklistItems` is a **navigation property** (a separate child
+  resource collection), not an inline field — a PATCH to the task itself
+  cannot touch it even in principle.
+- Per the [`checklistItem` resource reference](https://learn.microsoft.com/en-us/graph/api/resources/checklistitem),
+  there is no ETag, `cTag`, or version field on this resource for this
+  server to have mishandled — the API exposes none.
+- These request-shape properties are locked in as regression tests in
+  `tests/unit/todoApi.test.ts`.
+
+No bug was found in how this server constructs Graph requests. Multiple
+independent, longstanding user reports (e.g. on
+[Microsoft Q&A](https://learn.microsoft.com/en-us/answers/questions/5219543/microsoft-to-do-shared-list-is-not-syncing))
+describe shared Microsoft To Do lists losing data or falling out of sync
+across participants — Microsoft To Do's shared-list backend (built on
+Exchange Online, per Microsoft's own To Do API overview) has a
+long-documented history of this class of issue, independent of any
+specific client. The symptom pattern here (checklist items *and* body both
+reset together, triggered by a subsequent unrelated edit) is consistent
+with a **server-side full-task resync overwriting a stale replica**,
+which no client-side request-shaping can prevent or detect — the API
+gives no version/ETag signal to guard against it.
+
+**Mitigation implemented pending a Microsoft-side fix:** `add_checklist_item`,
+`update_checklist_item`, and `delete_checklist_item` now call
+`getTaskList` first and refuse to proceed (`shared_list_write_blocked`
+error) when the target list is shared and not owned by the current
+connection, unless the caller explicitly passes
+`acknowledge_shared_list_risk: true` (see `src/tools/sharedListGuard.ts`).
+This does not fix the underlying Microsoft-side risk — it stops the tool
+from silently returning "success" on writes that Microsoft's sync may
+later discard, and requires explicit, informed opt-in instead.
+
+**If you hit this:** avoid checklist-item writes (from this server or any
+other client) on shared lists you don't own where possible; prefer
+per-person lists with `linkedResource`/task-level sharing instead of
+relying on shared-list sync for anything you can't afford to lose. Use the
+`list_checklist_items` read tool to verify actual server-side state before
+and after any write, rather than trusting a write's own success response.
+
 ## Logging redaction
 
 `src/logging/logger.ts` maintains an explicit `pino` `redact` path list

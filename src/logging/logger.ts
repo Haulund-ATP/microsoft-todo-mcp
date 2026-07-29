@@ -22,6 +22,14 @@ export interface LogFields {
   route?: string;
   httpMethod?: string;
   httpStatusCode?: number;
+  /** Opaque Graph resource identifiers — never the title/displayName/body they point at. */
+  taskListId?: string;
+  taskId?: string;
+  checklistItemId?: string;
+  graphEndpoint?: string;
+  graphMethod?: string;
+  isSharedList?: boolean;
+  isListOwner?: boolean;
 }
 
 const REDACT_PATHS = [

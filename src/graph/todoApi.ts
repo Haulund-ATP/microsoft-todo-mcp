@@ -35,6 +35,13 @@ export interface ChecklistItem {
   displayName: string;
   isChecked: boolean;
   createdDateTime?: string;
+  /**
+   * Set only once the item is checked off. This is the only
+   * "last changed" signal the Graph checklistItem resource exposes — there
+   * is no lastModifiedDateTime or ETag on this resource (confirmed against
+   * https://learn.microsoft.com/en-us/graph/api/resources/checklistitem).
+   */
+  checkedDateTime?: string;
 }
 
 function mapTaskList(raw: Record<string, unknown>): TaskList {
@@ -68,6 +75,7 @@ function mapChecklistItem(raw: Record<string, unknown>): ChecklistItem {
     displayName: String(raw.displayName ?? ""),
     isChecked: Boolean(raw.isChecked),
     createdDateTime: raw.createdDateTime as string | undefined,
+    checkedDateTime: raw.checkedDateTime as string | undefined,
   };
 }
 

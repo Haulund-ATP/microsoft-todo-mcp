@@ -1,0 +1,43 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.local
+.env.production
+.env.*.local
+*.pfx
+*.pem
+*.key
+
+# MSAL / Azure CLI token caches
+.azure/
+msal-token-cache*.json
+**/msal_cache*.json
+.msal-cache/
+
+# logs
+*.log
+npm-debug.log*
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# test artifacts
+coverage/
+playwright-report/
+test-results/
+
+# bicep
+infra/**/*.json.bak

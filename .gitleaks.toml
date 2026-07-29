@@ -1,0 +1,13 @@
+title = "gitleaks config for microsoft-todo-mcp"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known false positives: public Azure built-in RBAC role definition IDs, not secrets"
+regexes = [
+  '''4633458b-17de-408a-b874-0445c86b69e6''', # Key Vault Secrets User (Azure built-in role)
+]
+paths = [
+  '''infra/modules/keyVault\.bicep''',
+]

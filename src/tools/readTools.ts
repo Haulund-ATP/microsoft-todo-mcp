@@ -61,6 +61,20 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
   );
 
   server.registerTool(
+    "list_checklist_items",
+    {
+      title: "List checklist items",
+      description: "Lists the checklist (sub-item) entries on a task, including their item_id, text, and checked state.",
+      inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    },
+    async ({ list_id, task_id, connection_id }) =>
+      runGraphTool(ctx, "list_checklist_items", connection_id, (client) =>
+        todo.listChecklistItems(client, list_id, task_id)
+      )
+  );
+
+  server.registerTool(
     "search_tasks",
     {
       title: "Search tasks",

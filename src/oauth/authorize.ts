@@ -68,7 +68,7 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
     return;
   }
 
-  const csrfToken = issueCsrfToken(res);
+  const csrfToken = issueCsrfToken(req, res);
   // The consent form both posts to (same-origin) and — on approval — is
   // redirected by the server to the client's redirect_uri, which is
   // virtually never same-origin (ChatGPT/Claude/etc. all live elsewhere).

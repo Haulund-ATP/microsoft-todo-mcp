@@ -12,7 +12,7 @@ export const accountsRouter = Router();
 
 accountsRouter.get("/accounts", requireOwner, async (req, res) => {
   const [connections, profiles] = await Promise.all([new ConnectionsRepo().list(), new ProfilesRepo().list()]);
-  const csrfToken = issueCsrfToken(res);
+  const csrfToken = issueCsrfToken(req, res);
   res.set("Content-Type", "text/html; charset=utf-8");
   res.send(renderAccountsPage({ connections, profiles, csrfToken }));
 });

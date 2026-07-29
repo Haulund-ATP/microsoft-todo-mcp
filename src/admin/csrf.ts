@@ -17,10 +17,30 @@ function sign(value: string, secret: string): string {
   return createHmac("sha256", secret).update(value).digest("hex");
 }
 
-export function issueCsrfToken(res: Response): string {
-  const nonce = randomBytes(18).toString("hex");
+function isValidToken(token: string, secret: string): boolean {
+  const [nonce, sig] = token.split(".");
+  if (!nonce || !sig) return false;
+  const expected = sign(nonce, secret);
+  const a = Buffer.from(sig, "hex");
+  const b = Buffer.from(expected, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Reuses the caller's existing, still-valid CSRF cookie instead of always
+ * minting a fresh one. Minting unconditionally meant any second page load —
+ * a reload, a second tab, returning from an OAuth redirect while the
+ * original tab was still open — silently invalidated every token embedded
+ * in a page rendered before it, since the double-submit cookie is one
+ * global value per browser, not per page render. Reusing the token when
+ * it's already valid keeps concurrently open/rendered pages' embedded
+ * tokens in sync with the cookie the browser actually holds.
+ */
+export function issueCsrfToken(req: Request, res: Response): string {
   const secret = loadEnv().CSRF_COOKIE_SECRET;
-  const token = `${nonce}.${sign(nonce, secret)}`;
+  const existing = req.cookies?.[CSRF_COOKIE_NAME];
+  const token =
+    typeof existing === "string" && isValidToken(existing, secret) ? existing : mintToken(secret);
   res.cookie(CSRF_COOKIE_NAME, token, {
     httpOnly: false,
     secure: true,
@@ -33,13 +53,9 @@ export function issueCsrfToken(res: Response): string {
   return token;
 }
 
-function isValidToken(token: string, secret: string): boolean {
-  const [nonce, sig] = token.split(".");
-  if (!nonce || !sig) return false;
-  const expected = sign(nonce, secret);
-  const a = Buffer.from(sig, "hex");
-  const b = Buffer.from(expected, "hex");
-  return a.length === b.length && timingSafeEqual(a, b);
+function mintToken(secret: string): string {
+  const nonce = randomBytes(18).toString("hex");
+  return `${nonce}.${sign(nonce, secret)}`;
 }
 
 /** Enforces that the submitted `_csrf` field matches the signed cookie. */

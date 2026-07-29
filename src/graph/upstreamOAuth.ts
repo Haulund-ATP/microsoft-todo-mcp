@@ -105,7 +105,7 @@ function maskEmail(email: string | undefined | null): string {
  */
 export async function completeMicrosoftSignIn(
   code: string,
-  pkce: PkcePair,
+  codeVerifier: string,
   correlationId: string,
   reauthConnectionId?: string
 ): Promise<CompletedSignIn> {
@@ -117,7 +117,7 @@ export async function completeMicrosoftSignIn(
       code,
       scopes: GRAPH_SCOPES,
       redirectUri: redirectUri(),
-      codeVerifier: pkce.verifier,
+      codeVerifier,
     });
   } catch (err) {
     if (isAdminConsentError(err)) {

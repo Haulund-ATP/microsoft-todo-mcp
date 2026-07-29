@@ -52,6 +52,26 @@ export interface OAuthAuthorizationCode {
   consumed: boolean;
 }
 
+/**
+ * Server-side state for an in-flight upstream Microsoft sign-in redirect
+ * (owner login or connecting/reauthorizing a Microsoft account). Must be
+ * persisted rather than kept in-memory: Container Apps consumption-plan
+ * replicas scale to zero after 5 minutes idle, and a slow interactive
+ * Microsoft sign-in (MFA, etc.) can outlast that — an in-memory store would
+ * silently lose the handshake on a cold-started replica.
+ */
+export interface PendingUpstreamAuth {
+  state: string; // lookup key
+  kind: "owner_login" | "connect";
+  codeVerifier: string;
+  /** owner_login only: where to redirect after a successful login. */
+  returnTo?: string;
+  /** connect only: set when this is a reauth of an existing connection rather than a brand new one. */
+  reauthConnectionId?: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface OAuthRefreshToken {
   tokenId: string; // lookup key (hashed at rest)
   clientId: string;

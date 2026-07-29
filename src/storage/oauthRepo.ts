@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { getTableClient, TABLE_NAMES } from "./clients.js";
-import type { OAuthAuthorizationCode, OAuthClient, OAuthRefreshToken } from "./types.js";
+import type { OAuthAuthorizationCode, OAuthClient, OAuthRefreshToken, PendingUpstreamAuth } from "./types.js";
 
 /**
  * Authorization codes and refresh tokens are looked up by the SHA-256 hash
@@ -15,6 +15,7 @@ export function hashSecret(value: string): string {
 const CLIENT_PARTITION = "client";
 const CODE_PARTITION = "code";
 const TOKEN_PARTITION = "token";
+const PENDING_AUTH_PARTITION = "pending";
 
 function stripMeta<T extends object>(entity: T): T {
   const { partitionKey: _pk, rowKey: _rk, etag: _etag, timestamp: _ts, ...rest } = entity as T & {
@@ -145,5 +146,39 @@ export class OAuthTokensRepo {
       );
       await this.revokeChainFrom(rowKey);
     }
+  }
+}
+
+/**
+ * Persists the PKCE verifier + redirect state for an in-flight upstream
+ * Microsoft sign-in (see PendingUpstreamAuth for why this must not be an
+ * in-memory Map). One-time use: consume() deletes the row.
+ */
+export class PendingUpstreamAuthRepo {
+  private table() {
+    return getTableClient(TABLE_NAMES.pendingAuth);
+  }
+
+  async store(entry: PendingUpstreamAuth): Promise<void> {
+    await this.table().upsertEntity(
+      { partitionKey: PENDING_AUTH_PARTITION, rowKey: entry.state, ...entry },
+      "Replace"
+    );
+  }
+
+  async consume(state: string): Promise<PendingUpstreamAuth | undefined> {
+    let entity;
+    try {
+      entity = await this.table().getEntity(PENDING_AUTH_PARTITION, state);
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404) return undefined;
+      throw err;
+    }
+    // Delete first (one-time use) regardless of expiry, so a replay of an
+    // expired-but-not-yet-cleaned-up state can't be consumed twice either.
+    await this.table().deleteEntity(PENDING_AUTH_PARTITION, state).catch(() => undefined);
+    const record = stripMeta(entity) as unknown as PendingUpstreamAuth;
+    if (new Date(record.expiresAt).getTime() < Date.now()) return undefined;
+    return record;
   }
 }

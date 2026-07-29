@@ -55,6 +55,7 @@ export const TABLE_NAMES = {
   oauthClients: "oauthclients",
   oauthCodes: "oauthcodes",
   oauthTokens: "oauthtokens",
+  pendingAuth: "pendingauth",
 } as const;
 
 export const BLOB_CONTAINERS = {

@@ -2,10 +2,10 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { generatePkce, generateState, buildMicrosoftAuthorizeUrl, completeMicrosoftSignIn, isAdminConsentError, buildAdminConsentError } from "../graph/upstreamOAuth.js";
 import { ConnectionsRepo } from "../storage/connectionsRepo.js";
+import { PendingUpstreamAuthRepo } from "../storage/oauthRepo.js";
 import { requireOwner } from "./requireOwner.js";
 import { requireCsrf } from "./csrf.js";
 import { childLogger } from "../logging/logger.js";
-import type { PkcePair } from "../graph/upstreamOAuth.js";
 
 /**
  * Admin-only flow for connecting a new Microsoft account (or re-authorizing
@@ -15,21 +15,23 @@ import type { PkcePair } from "../graph/upstreamOAuth.js";
  * facing ChatGPT/Claude).
  */
 
-const pending = new Map<string, { pkce: PkcePair; reauthConnectionId?: string; createdAt: number }>();
-
-function prune(): void {
-  const cutoff = Date.now() - 10 * 60 * 1000;
-  for (const [state, entry] of pending) if (entry.createdAt < cutoff) pending.delete(state);
-}
+const PENDING_TTL_MS = 10 * 60 * 1000;
 
 export const connectRouter = Router();
 
 connectRouter.get("/admin/connect/start", requireOwner, async (req, res) => {
-  prune();
   const pkce = generatePkce();
   const state = generateState() + "." + randomUUID();
   const reauthConnectionId = typeof req.query.reauth === "string" ? req.query.reauth : undefined;
-  pending.set(state, { pkce, reauthConnectionId, createdAt: Date.now() });
+  const now = Date.now();
+  await new PendingUpstreamAuthRepo().store({
+    state,
+    kind: "connect",
+    codeVerifier: pkce.verifier,
+    reauthConnectionId,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + PENDING_TTL_MS).toISOString(),
+  });
   const url = await buildMicrosoftAuthorizeUrl(pkce, state);
   res.redirect(url);
 });
@@ -47,15 +49,14 @@ connectRouter.get("/oauth/microsoft/callback", requireOwner, async (req, res) =>
     res.status(400).json({ error: "invalid_request" });
     return;
   }
-  const entry = pending.get(state);
-  pending.delete(state);
-  if (!entry) {
+  const entry = await new PendingUpstreamAuthRepo().consume(state);
+  if (!entry || entry.kind !== "connect") {
     res.status(400).json({ error: "invalid_state" });
     return;
   }
 
   try {
-    await completeMicrosoftSignIn(code, entry.pkce, req.correlationId, entry.reauthConnectionId);
+    await completeMicrosoftSignIn(code, entry.codeVerifier, req.correlationId, entry.reauthConnectionId);
     res.redirect("/accounts");
   } catch (err) {
     if (isAdminConsentError(err)) {

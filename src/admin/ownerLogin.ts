@@ -2,7 +2,8 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { loadEnv } from "../config/env.js";
 import { createMsalAppStateless } from "../graph/msalClient.js";
-import { generatePkce, generateState, type PkcePair } from "../graph/upstreamOAuth.js";
+import { generatePkce, generateState } from "../graph/upstreamOAuth.js";
+import { PendingUpstreamAuthRepo } from "../storage/oauthRepo.js";
 import { setOwnerSessionCookie } from "./session.js";
 import { audit } from "../logging/audit.js";
 import { childLogger } from "../logging/logger.js";
@@ -18,27 +19,16 @@ import { childLogger } from "../logging/logger.js";
  */
 
 const OWNER_LOGIN_SCOPES = ["openid", "profile"];
-
-// In-memory PKCE/state store for the short owner-login handshake. A crash
-// mid-login just means the user retries; nothing sensitive is at stake.
-const pendingLogins = new Map<string, { pkce: PkcePair; returnTo: string; createdAt: number }>();
+const PENDING_TTL_MS = 5 * 60 * 1000;
 
 function redirectUri(): string {
   return `${loadEnv().PUBLIC_BASE_URL.replace(/\/$/, "")}/oauth/owner/callback`;
-}
-
-function pruneExpired(): void {
-  const cutoff = Date.now() - 5 * 60 * 1000;
-  for (const [state, entry] of pendingLogins) {
-    if (entry.createdAt < cutoff) pendingLogins.delete(state);
-  }
 }
 
 export const ownerLoginRouter = Router();
 
 ownerLoginRouter.get("/oauth/owner/login", async (req, res, next) => {
   try {
-    pruneExpired();
     const returnTo = typeof req.query.returnTo === "string" ? req.query.returnTo : "/accounts";
     if (!returnTo.startsWith("/")) {
       res.status(400).json({ error: "invalid_return_to" });
@@ -46,7 +36,15 @@ ownerLoginRouter.get("/oauth/owner/login", async (req, res, next) => {
     }
     const pkce = generatePkce();
     const state = generateState() + "." + randomUUID();
-    pendingLogins.set(state, { pkce, returnTo, createdAt: Date.now() });
+    const now = Date.now();
+    await new PendingUpstreamAuthRepo().store({
+      state,
+      kind: "owner_login",
+      codeVerifier: pkce.verifier,
+      returnTo,
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + PENDING_TTL_MS).toISOString(),
+    });
 
     const app = await createMsalAppStateless();
     const url = await app.getAuthCodeUrl({
@@ -76,9 +74,8 @@ ownerLoginRouter.get("/oauth/owner/callback", async (req, res, next) => {
       res.status(400).json({ error: "invalid_request" });
       return;
     }
-    const pending = pendingLogins.get(state);
-    pendingLogins.delete(state);
-    if (!pending) {
+    const pending = await new PendingUpstreamAuthRepo().consume(state);
+    if (!pending || pending.kind !== "owner_login" || !pending.returnTo) {
       res.status(400).json({ error: "invalid_state" });
       return;
     }
@@ -88,7 +85,7 @@ ownerLoginRouter.get("/oauth/owner/callback", async (req, res, next) => {
       code,
       scopes: OWNER_LOGIN_SCOPES,
       redirectUri: redirectUri(),
-      codeVerifier: pending.pkce.verifier,
+      codeVerifier: pending.codeVerifier,
     });
 
     const env = loadEnv();

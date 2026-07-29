@@ -17,10 +17,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    env:
-      IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Compute lowercase image reference
+        run: echo "IMAGE=ghcr.io/${GH_REPO,,}:sha-${{ github.sha }}" >> "$GITHUB_ENV"
+        env:
+          GH_REPO: ${{ github.repository }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

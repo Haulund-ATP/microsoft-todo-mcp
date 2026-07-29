@@ -25,7 +25,10 @@ export function issueCsrfToken(res: Response): string {
     httpOnly: false,
     secure: true,
     sameSite: "strict",
-    path: "/accounts",
+    // Used across /accounts, /admin/connect, and /oauth/authorize —
+    // must not be scoped to a single prefix or the cookie won't be sent
+    // back on the others' form submissions.
+    path: "/",
   });
   return token;
 }

@@ -42,6 +42,23 @@ function Test-Endpoint {
 
 Write-Host "== Smoke-testing $BaseUrl ==" -ForegroundColor Cyan
 
+# Consumption-plan Container Apps scale to zero, so the first request after
+# an idle period (or right after a fresh deploy) triggers a cold start.
+# Poll /health with backoff before running the real assertions so the suite
+# doesn't fail on cold-start latency alone.
+Write-Host "-- warming up (tolerating cold start) --" -ForegroundColor DarkGray
+$warm = $false
+for ($i = 0; $i -lt 12; $i++) {
+    try {
+        $r = Invoke-WebRequest -Uri "$BaseUrl/health" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+        if ($r.StatusCode -eq 200) { $warm = $true; break }
+    } catch { }
+    Start-Sleep -Seconds 5
+}
+if (-not $warm) {
+    $failures.Add('/health never became reachable during warm-up window (60s)')
+}
+
 Test-Endpoint -Path '/health' -Validate { param($json) if ($json.status -ne 'ok') { $failures.Add('/health did not report status=ok') } }
 Test-Endpoint -Path '/ready'
 Test-Endpoint -Path '/version' -Validate {

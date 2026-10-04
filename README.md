@@ -42,6 +42,9 @@ own OAuth authorization server, your own encrypted token storage).
 
 ## Feature summary
 
+- **Bulk task renaming** with a default preview, stale-title checks and
+  per-task verification; prepares location prefixes for alphabetical
+  grouping in the To Do app — see [`docs/bulk-rename.md`](docs/bulk-rename.md).
 - **MCP tools**: full read/write coverage of task lists, tasks, and
   checklist items, plus account/profile discovery tools — see the tool
   list in [`src/tools/`](src/tools/).

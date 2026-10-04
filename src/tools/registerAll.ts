@@ -3,9 +3,11 @@ import type { ToolContext } from "./context.js";
 import { registerAccountTools } from "./accounts.js";
 import { registerReadTools } from "./readTools.js";
 import { registerWriteTools } from "./writeTools.js";
+import { registerBulkRenameTools } from "./bulkRenameTools.js";
 
 export function registerAllTools(server: McpServer, ctx: ToolContext): void {
   registerAccountTools(server, ctx);
   registerReadTools(server, ctx);
   registerWriteTools(server, ctx);
+  registerBulkRenameTools(server, ctx);
 }

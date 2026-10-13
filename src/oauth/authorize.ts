@@ -69,19 +69,6 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
   }
 
   const csrfToken = issueCsrfToken(req, res);
-  // The consent form both posts to (same-origin) and — on approval — is
-  // redirected by the server to the client's redirect_uri, which is
-  // virtually never same-origin (ChatGPT/Claude/etc. all live elsewhere).
-  // CSP3's form-action restricts that follow-up redirect too, so the
-  // default helmet `form-action 'self'` would block every real client.
-  // redirect_uri was already validated above against this exact client's
-  // registered list, so it's safe to widen form-action to that one origin
-  // for this specific response only.
-  const redirectOrigin = new URL(params.redirect_uri).origin;
-  res.set(
-    "Content-Security-Policy",
-    `default-src 'self'; base-uri 'self'; form-action 'self' ${redirectOrigin}; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'`
-  );
   res.set("Content-Type", "text/html; charset=utf-8");
   res.send(renderConsentPage(client.clientName, params, csrfToken));
 });
@@ -128,8 +115,28 @@ authorizeRouter.post("/oauth/authorize/approve", requireCsrf, async (req, res) =
   const redirectUrl = new URL(params.redirect_uri);
   redirectUrl.searchParams.set("code", code);
   redirectUrl.searchParams.set("state", params.state);
-  res.redirect(redirectUrl.toString());
+  // Deliberately NOT a 302: a redirect answering a form POST is governed by
+  // CSP form-action for every hop of the chain, including any further
+  // redirects the client's own callback issues (e.g. chatgpt.com bouncing
+  // elsewhere). Chrome then blocks the navigation silently and the "Allow"
+  // button appears to do nothing. A fresh navigation from a rendered page
+  // (meta refresh + a visible link as fallback) isn't subject to form-action.
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  res.send(renderRedirectPage(redirectUrl.toString()));
 });
+
+function renderRedirectPage(url: string): string {
+  const escape = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Returning to app</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="0;url=${escape(url)}">
+</head><body style="font-family: system-ui, sans-serif; max-width: 480px; margin: 4rem auto; padding: 0 1rem;">
+<h1>Access granted</h1>
+<p>Returning you to the app… If nothing happens, <a href="${escape(url)}">continue here</a>.</p>
+</body></html>`;
+}
 
 function renderConsentPage(
   clientName: string,

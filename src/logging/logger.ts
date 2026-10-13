@@ -16,6 +16,9 @@ export interface LogFields {
   resultStatus?: "success" | "error" | "consent_required" | "throttled";
   responseTimeMs?: number;
   graphStatusCode?: number;
+  /** Graph's error code and a sanitized (quoted values stripped) message, for 400s only. */
+  graphErrorCode?: string;
+  graphErrorMessage?: string;
   throttled?: boolean;
   rejectReason?: string;
   deploymentVersion?: string;

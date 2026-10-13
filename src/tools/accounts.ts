@@ -13,7 +13,7 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
       description:
         "Lists every Microsoft account connection known to this MCP server (personal and organizational), with alias, status, and last-used time. Does not return tokens or secrets.",
       inputSchema: {},
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
       const connections = await new ConnectionsRepo().list();
@@ -48,7 +48,7 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
       description:
         "Returns the single Microsoft connection this MCP endpoint is bound to (for /mcp/personal, /mcp/work, /mcp/{alias}), or null if this is the universal /mcp endpoint which requires an explicit connection_id per call.",
       inputSchema: {},
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
       if (!ctx.boundConnectionId) {
@@ -79,7 +79,7 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
       title: "List profiles",
       description: "Lists every profile-to-connection binding (e.g. personal -> connection X, work -> connection Y).",
       inputSchema: {},
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
       const profiles = await new ProfilesRepo().list();

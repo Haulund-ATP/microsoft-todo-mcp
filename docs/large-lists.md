@@ -44,10 +44,17 @@ separately, in input order; partial success is possible.
 
 ### `copy_tasks`
 
-Copies or moves up to 100 tasks from `list_id` to `target_list_id`. For a
-list in another profile's Microsoft account, pass `target_profile` (e.g.
-`"personal"`) or `target_connection_id`; without either, the target is in
-the same account.
+Copies up to 100 tasks from `list_id` to `target_list_id`; the source tasks
+are never changed. For a list in another profile's Microsoft account, pass
+`target_profile` (e.g. `"personal"`) or `target_connection_id`; without
+either, the target is in the same account.
+
+To move tasks: copy them, check the result, then delete the originals with
+`bulk_task_action` (`action: "delete"`). Moving used to be a mode of this
+tool, but that made the tool destructive for every call, and ChatGPT's
+safety check blocked even a single cross-profile copy before it reached the
+server (2026-10-13). ChatGPT may still block cross-account writes on its own
+judgement; such a block never reaches this server and leaves no log line.
 
 Copied: title, notes (formatting kept), importance, status, completion
 date, due/start/reminder dates, recurrence, categories, and — unless
@@ -57,14 +64,15 @@ importance, status and due date only, and the result carries a warning.
 
 A task whose title already exists in the target list is reported as
 `exists` and skipped, so retrying a partly failed request doesn't create
-duplicates; pass `allow_duplicates: true` to copy anyway. With
-`mode: "move"`, the source task is deleted only after the copy has been
-read back with the same title and checklist count.
+duplicates; pass `allow_duplicates: true` to copy anyway. Every copy is
+read back and compared on title and checklist count.
 
-Per-task statuses: `preview`, `exists`, `copied`, `moved`,
-`inconsistent` (read-back didn't match; source untouched),
-`copied_not_deleted` (move: the copy exists but the source delete failed),
-`error`.
+Per-task statuses: `preview`, `exists`, `copied`, `inconsistent`
+(read-back didn't match), `error`.
+
+All tools declare `openWorldHint: false`: they only act on the owner's own
+Microsoft To Do accounts. Without it, MCP clients assume a tool may reach
+arbitrary external systems.
 
 ### `bulk_task_action`
 

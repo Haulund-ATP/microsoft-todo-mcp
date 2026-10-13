@@ -38,7 +38,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
         time_zone: timezoneField,
         ...connectionIdInputShape,
       },
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, title, body, importance: imp, due_date_time, reminder_date_time, time_zone, connection_id }) =>
       runGraphTool(ctx, "create_task", connection_id, (client) =>
@@ -70,7 +70,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
         time_zone: timezoneField,
         ...connectionIdInputShape,
       },
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, task_id, title, body, importance: imp, due_date_time, reminder_date_time, time_zone, connection_id }) =>
       runGraphTool(ctx, "update_task", connection_id, async (client, connectionId) => {
@@ -111,7 +111,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
       title: "Complete task",
       description: "Marks a task as completed. Works on shared lists.",
       inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, task_id, connection_id }) =>
       runGraphTool(ctx, "complete_task", connection_id, async (client, connectionId) => {
@@ -141,7 +141,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
       title: "Reopen task",
       description: "Reopens a completed task (sets status back to notStarted). Works on shared lists.",
       inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, task_id, connection_id }) =>
       runGraphTool(ctx, "reopen_task", connection_id, async (client, connectionId) => {
@@ -171,7 +171,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
       title: "Delete task",
       description: "Permanently deletes a task. This cannot be undone.",
       inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ list_id, task_id, connection_id }) =>
       runGraphTool(ctx, "delete_task", connection_id, async (client) => {
@@ -186,7 +186,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
       title: "Create task list",
       description: "Creates a new task list.",
       inputSchema: { display_name: z.string().min(1).max(255), ...connectionIdInputShape },
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ display_name, connection_id }) =>
       runGraphTool(ctx, "create_task_list", connection_id, (client) => todo.createTaskList(client, display_name))
@@ -198,7 +198,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
       title: "Rename task list",
       description: "Renames an existing task list.",
       inputSchema: { list_id: z.string().min(1), display_name: z.string().min(1).max(255), ...connectionIdInputShape },
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, display_name, connection_id }) =>
       runGraphTool(ctx, "rename_task_list", connection_id, (client) => todo.renameTaskList(client, list_id, display_name))
@@ -210,7 +210,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
       title: "Delete task list",
       description: "Permanently deletes a task list and all tasks in it. This cannot be undone.",
       inputSchema: { list_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ list_id, connection_id }) =>
       runGraphTool(ctx, "delete_task_list", connection_id, async (client) => {
@@ -233,7 +233,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
         display_name: z.string().min(1).max(255),
         ...connectionIdInputShape,
       },
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, task_id, display_name, connection_id }) =>
       runGraphTool(ctx, "add_checklist_item", connection_id, async (client, connectionId) => {
@@ -287,7 +287,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
         is_checked: z.boolean().optional(),
         ...connectionIdInputShape,
       },
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, task_id, item_id, display_name, is_checked, connection_id }) => {
       if (display_name === undefined && is_checked === undefined) {
@@ -366,7 +366,7 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
         item_id: z.string().min(1),
         ...connectionIdInputShape,
       },
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ list_id, task_id, item_id, connection_id }) =>
       runGraphTool(ctx, "delete_checklist_item", connection_id, async (client, connectionId) => {

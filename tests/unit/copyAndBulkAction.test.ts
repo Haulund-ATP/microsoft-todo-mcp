@@ -4,9 +4,10 @@ import type { Client } from "@microsoft/microsoft-graph-client";
 import { buildCopyPayload, copyTasks } from "../../src/graph/copyTasks.js";
 import { bulkTaskAction } from "../../src/graph/bulkTaskAction.js";
 import { searchTasksMulti } from "../../src/graph/search.js";
+import { getTasksBatch } from "../../src/graph/getTasks.js";
 import * as todo from "../../src/graph/todoApi.js";
 import { bulkTaskActionInputShape, copyTasksInputShape } from "../../src/tools/bulkTools.js";
-import { listTasksInputShape, searchTasksInputShape } from "../../src/tools/readTools.js";
+import { getTasksInputShape, listTasksInputShape, searchTasksInputShape } from "../../src/tools/readTools.js";
 
 type Task = Record<string, unknown> & { id: string; title: string; status?: string };
 type Item = { id: string; displayName: string; isChecked: boolean };
@@ -275,5 +276,39 @@ describe("tool annotations", () => {
     for (const [name, a] of Object.entries(annotations)) expect(a, name).toMatchObject({ openWorldHint: false });
     expect(annotations.copy_tasks).toMatchObject({ readOnlyHint: false, destructiveHint: false });
     expect(annotations.bulk_task_action).toMatchObject({ destructiveHint: true });
+  });
+});
+describe("getTasksBatch", () => {
+  it("returns full tasks in input order, with checklist on request, and reports missing ones", async () => {
+    const acc = fakeAccount({ L: { tasks: [
+      { id: "1", title: "Skammel", status: "completed", body: { content: "IKEA", contentType: "text" } },
+      { id: "2", title: "Lampe" },
+    ] } });
+    acc.checklists.set("1", [{ id: "c", displayName: "Skruer", isChecked: true }]);
+    const result = await getTasksBatch(acc.client, "L", ["2", "gone", "1"], true);
+    expect(result).toMatchObject({ requested: 3, found: 2, not_found: 1, errors: 0 });
+    expect(result.results.map((r) => r.status)).toEqual(["found", "not_found", "found"]);
+    expect(result.results[2]).toMatchObject({ task: { title: "Skammel", body: { content: "IKEA" } }, checklist: [{ displayName: "Skruer" }] });
+    expect(result.results[0]).toMatchObject({ checklist: [] });
+  });
+
+  it("skips checklist reads unless asked, and hides upstream error text", async () => {
+    const acc = fakeAccount({ L: { tasks: [{ id: "1", title: "t" }] } });
+    const api = vi.spyOn(acc.client, "api");
+    const ok = await getTasksBatch(acc.client, "L", ["1"], false);
+    expect(ok.results[0]).not.toHaveProperty("checklist", expect.anything());
+    expect(api.mock.calls.some(([p]) => String(p).endsWith("/checklistItems"))).toBe(false);
+
+    api.mockImplementation(() => ({ get: async () => { throw Object.assign(new Error("secret upstream"), { statusCode: 500 }); } }) as never);
+    const failed = await getTasksBatch(acc.client, "L", ["1"], false);
+    expect(failed.results[0]).toMatchObject({ status: "error" });
+    expect(JSON.stringify(failed)).not.toContain("secret upstream");
+  });
+
+  it("caps batches at 100 unique ids", () => {
+    const schema = z.object(getTasksInputShape);
+    expect(schema.parse({ list_id: "L", task_ids: ["a"] }).include_checklist).toBe(false);
+    expect(schema.safeParse({ list_id: "L", task_ids: ["a", "a"] }).success).toBe(false);
+    expect(schema.safeParse({ list_id: "L", task_ids: Array.from({ length: 101 }, (_, i) => `${i}`) }).success).toBe(false);
   });
 });

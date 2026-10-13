@@ -6,6 +6,7 @@ import { runGraphTool, type ToolTextResult } from "./helpers.js";
 import * as todo from "../graph/todoApi.js";
 import { filterTasks, sortTasks, summarizeTasks } from "../graph/taskQuery.js";
 import { searchTasksMulti } from "../graph/search.js";
+import { getTasksBatch } from "../graph/getTasks.js";
 
 const isoDateTime = z.string().datetime({ offset: true }).or(z.string().date());
 
@@ -26,6 +27,17 @@ export const listTasksInputShape = {
   created_before: isoDateTime.optional().describe("Only tasks created before this date/time."),
   completed_before: isoDateTime.optional().describe("Only completed tasks finished before this date/time (e.g. to find old completed tasks)."),
   sort: z.enum(["none", "created_asc", "created_desc", "title", "due"]).default("none"),
+  ...connectionIdInputShape,
+};
+
+export const getTasksInputShape = {
+  list_id: z.string().min(1),
+  task_ids: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(100)
+    .refine((ids) => new Set(ids).size === ids.length, "Duplicate task_id."),
+  include_checklist: z.boolean().default(false),
   ...connectionIdInputShape,
 };
 
@@ -102,6 +114,21 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
   );
 
   server.registerTool(
+    "get_tasks",
+    {
+      title: "Get several tasks",
+      description:
+        "Reads up to 100 tasks from one list in a single call — full details including notes, dates and status, " +
+        "and the checklist when include_checklist=true. Use this instead of calling get_task repeatedly, e.g. to " +
+        "verify the results of copy_tasks or bulk_task_action. Missing tasks are reported per item as not_found.",
+      inputSchema: getTasksInputShape,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ list_id, task_ids, include_checklist, connection_id }) =>
+      runGraphTool(ctx, "get_tasks", connection_id, (client) => getTasksBatch(client, list_id, task_ids, include_checklist))
+  );
+
+  server.registerTool(
     "summarize_list",
     {
       title: "Summarize task list",
@@ -131,7 +158,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
     "get_task",
     {
       title: "Get task",
-      description: "Gets a single task by id within a task list.",
+      description: "Gets a single task by id within a task list. To read several tasks, use get_tasks in one call instead.",
       inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },

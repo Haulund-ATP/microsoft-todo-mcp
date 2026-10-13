@@ -38,14 +38,22 @@ export interface RecipeNote {
 
 const ENTITIES: Record<string, string> = { "&quot;": '"', "&#39;": "'", "&lt;": "<", "&gt;": ">", "&nbsp;": " ", "&amp;": "&" };
 
-/** The note as plain text; notes written through Graph since the HTML-only change come back as HTML. */
+/**
+ * The note as plain text; notes written through Graph since the HTML-only
+ * change come back as HTML. Only parsed as JSON, never rendered, but tags are
+ * still stripped until none are left so nested ones ("<<b>script>") can't
+ * survive a single pass.
+ */
 export function noteText(body?: { content: string; contentType: string }): string {
   if (!body?.content) return "";
   if (body.contentType !== "html") return body.content;
-  return body.content
-    .replace(/<br\s*\/?>|<\/p>|<\/div>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&(quot|#39|lt|gt|nbsp|amp);/g, (m) => ENTITIES[m] ?? m);
+  let text = body.content.replace(/<br\s*\/?>|<\/p>|<\/div>/gi, "\n");
+  let previous: string;
+  do {
+    previous = text;
+    text = text.replace(/<[^<>]*>/g, "");
+  } while (text !== previous);
+  return text.replace(/&(quot|#39|lt|gt|nbsp|amp);/g, (m) => ENTITIES[m] ?? m);
 }
 
 export function parseRecipeNote(body?: { content: string; contentType: string }): RecipeNote | undefined {

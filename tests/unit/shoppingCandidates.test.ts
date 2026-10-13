@@ -61,6 +61,7 @@ describe("recipe notes", () => {
     const html = JSON.stringify(json).replace(/"/g, "&quot;");
     expect(parseRecipeNote({ content: `<p>${html}</p>`, contentType: "html" })).toEqual(json);
     expect(noteText({ content: "a<br>b &amp; c", contentType: "html" })).toBe("a\nb & c");
+    expect(noteText({ content: "x<<b>script>y", contentType: "html" })).toBe("xy");
     expect(parseRecipeNote({ content: "side 112", contentType: "text" })).toBeUndefined();
   });
 });

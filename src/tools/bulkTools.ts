@@ -27,7 +27,6 @@ export const copyTasksInputShape = {
     .optional()
     .describe("Profile alias (e.g. 'personal') whose Microsoft account owns target_list_id. Omit for the same account."),
   target_connection_id: z.string().min(1).optional().describe("Alternative to target_profile."),
-  mode: z.enum(["copy", "move"]).default("copy"),
   include_checklist: z.boolean().default(true),
   allow_duplicates: z.boolean().default(false),
   dry_run: z.boolean().default(true),
@@ -68,23 +67,26 @@ export function registerBulkTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     "copy_tasks",
     {
-      title: "Copy or move tasks",
+      title: "Copy tasks",
       description:
-        "Copies or moves up to 100 tasks from one list to another — also to a list in a different profile's " +
-        "Microsoft account (target_profile) — keeping notes, importance, status, due/reminder dates, recurrence, " +
-        "categories and the checklist with checked state. Defaults to a read-only preview (dry_run=true); use " +
-        "dry_run=false to apply. Tasks whose title already exists in the target are skipped unless " +
-        "allow_duplicates=true, so retrying is safe. mode='move' deletes each source task only after its copy was " +
-        "read back and matched. Returns per-task results; partial success is possible.",
+        "Copies up to 100 tasks from one list to another — also to a list in another of the owner's own " +
+        "profiles (target_profile, e.g. 'personal') — keeping notes, importance, status, due/reminder dates, " +
+        "recurrence, categories and the checklist with checked state. Never changes or deletes the source tasks. " +
+        "Defaults to a read-only preview (dry_run=true); use dry_run=false to apply. Tasks whose title already " +
+        "exists in the target are skipped unless allow_duplicates=true, so retrying is safe. To move tasks, copy " +
+        "them, check the result, then delete the originals with bulk_task_action. Returns per-task results; " +
+        "partial success is possible.",
       inputSchema: copyTasksInputShape,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      // Copy-only, so not destructive. Moving used to be a mode of this tool,
+      // which forced destructiveHint on every call; ChatGPT's safety check
+      // then blocked a plain cross-profile copy before it reached the server.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) =>
       runGraphTool(ctx, "copy_tasks", args.connection_id, async (source, sourceConnectionId) => {
         const targetConnectionId = await resolveTargetConnection(sourceConnectionId, args.target_profile, args.target_connection_id);
         const target = targetConnectionId === sourceConnectionId ? source : createGraphClientForConnection(targetConnectionId);
         return copyTasks(source, args.list_id, target, args.target_list_id, args.task_ids, {
-          mode: args.mode,
           dryRun: args.dry_run,
           includeChecklist: args.include_checklist,
           allowDuplicates: args.allow_duplicates,
@@ -103,7 +105,7 @@ export function registerBulkTools(server: McpServer, ctx: ToolContext): void {
         "mismatches are skipped as conflicts. delete only touches completed tasks unless only_completed=false. " +
         "Each change is verified by a fresh read; partial success is possible. Deletion cannot be undone.",
       inputSchema: bulkTaskActionInputShape,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ list_id, action, items, only_completed, dry_run, connection_id }) =>
       runGraphTool(ctx, "bulk_task_action", connection_id, (client) =>

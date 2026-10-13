@@ -12,7 +12,7 @@ type Task = Record<string, unknown> & { id: string; title: string; status?: stri
 type Item = { id: string; displayName: string; isChecked: boolean };
 
 /** Stateful fake of the To Do endpoints these modules use, one account per instance. */
-function fakeAccount(lists: Record<string, { name?: string; tasks: Task[] }>, opts: { rejectFields?: string[]; failDelete?: boolean } = {}) {
+function fakeAccount(lists: Record<string, { name?: string; tasks: Task[] }>, opts: { rejectFields?: string[] } = {}) {
   const checklists = new Map<string, Item[]>();
   const writes: Array<{ method: string; path: string; body?: unknown }> = [];
   let seq = 0;
@@ -52,7 +52,6 @@ function fakeAccount(lists: Record<string, { name?: string; tasks: Task[] }>, op
         },
         async delete() {
           writes.push({ method: "delete", path });
-          if (opts.failDelete) throw new Error("boom");
           list!.tasks = list!.tasks.filter((t) => t.id !== decodeURIComponent(taskId!));
         },
       };
@@ -81,7 +80,7 @@ describe("copyTasks", () => {
   it("previews by default without writing to either account", async () => {
     const src = source();
     const dst = fakeAccount({ T: { tasks: [] } });
-    const result = await copyTasks(src.client, "S", dst.client, "T", ["a", "b"], { mode: "copy", dryRun: true, includeChecklist: true, allowDuplicates: false });
+    const result = await copyTasks(src.client, "S", dst.client, "T", ["a", "b"], { dryRun: true, includeChecklist: true, allowDuplicates: false });
     expect(result.results.map((r) => r.status)).toEqual(["preview", "preview"]);
     expect(result.results[0].checklist_items).toBe(2);
     expect([...src.writes, ...dst.writes]).toEqual([]);
@@ -90,7 +89,7 @@ describe("copyTasks", () => {
   it("copies notes, status, recurrence and checked checklist items across accounts, skipping server-owned fields", async () => {
     const src = source();
     const dst = fakeAccount({ T: { tasks: [] } });
-    const result = await copyTasks(src.client, "S", dst.client, "T", ["a"], { mode: "copy", dryRun: false, includeChecklist: true, allowDuplicates: false });
+    const result = await copyTasks(src.client, "S", dst.client, "T", ["a"], { dryRun: false, includeChecklist: true, allowDuplicates: false });
     expect(result.copied).toBe(1);
     const created = dst.lists.T.tasks[0]!;
     expect(created).toMatchObject({ title: "Mælk", status: "completed", importance: "high", body: { content: "<b>2 L</b>" }, recurrence: { pattern: { type: "weekly" } } });
@@ -103,27 +102,32 @@ describe("copyTasks", () => {
     expect(src.lists.S.tasks).toHaveLength(2); // copy leaves the source alone
   });
 
-  it("moves only after a matching read-back, and skips titles already in the target", async () => {
+  it("never writes to the source, and skips titles already in the target", async () => {
     const src = source();
     const dst = fakeAccount({ T: { tasks: [{ id: "x", title: "brød" }] } });
-    const result = await copyTasks(src.client, "S", dst.client, "T", ["a", "b"], { mode: "move", dryRun: false, includeChecklist: true, allowDuplicates: false });
-    expect(result.results.map((r) => r.status)).toEqual(["moved", "exists"]);
-    expect(src.lists.S.tasks.map((t) => t.id)).toEqual(["b"]);
+    const result = await copyTasks(src.client, "S", dst.client, "T", ["a", "b"], { dryRun: false, includeChecklist: true, allowDuplicates: false });
+    expect(result.results.map((r) => r.status)).toEqual(["copied", "exists"]);
+    expect(src.writes).toEqual([]);
+    expect(src.lists.S.tasks.map((t) => t.id)).toEqual(["a", "b"]);
   });
 
   it("falls back to essential fields when Graph rejects the full payload", async () => {
     const src = source();
     const dst = fakeAccount({ T: { tasks: [] } }, { rejectFields: ["recurrence"] });
-    const result = await copyTasks(src.client, "S", dst.client, "T", ["a"], { mode: "copy", dryRun: false, includeChecklist: false, allowDuplicates: false });
+    const result = await copyTasks(src.client, "S", dst.client, "T", ["a"], { dryRun: false, includeChecklist: false, allowDuplicates: false });
     expect(result.results[0]).toMatchObject({ status: "copied", warning: expect.stringContaining("only title") });
     expect(dst.lists.T.tasks[0]).not.toHaveProperty("recurrence");
   });
 
-  it("reports a failed source delete without hiding that the copy exists", async () => {
-    const src = fakeAccount({ S: { tasks: [{ id: "b", title: "Brød" }] } }, { failDelete: true });
+  it("reports a failed create without exposing the upstream error", async () => {
+    const src = fakeAccount({ S: { tasks: [{ id: "b", title: "Brød" }] } });
     const dst = fakeAccount({ T: { tasks: [] } });
-    const result = await copyTasks(src.client, "S", dst.client, "T", ["b"], { mode: "move", dryRun: false, includeChecklist: false, allowDuplicates: false });
-    expect(result.results[0]).toMatchObject({ status: "copied_not_deleted", new_task_id: expect.any(String) });
+    vi.spyOn(dst.client, "api").mockImplementation(() => {
+      const chain = { top: () => chain, select: () => chain, filter: () => chain, get: async () => ({ value: [] }), post: async () => { throw new Error("boom"); } };
+      return chain as never;
+    });
+    const result = await copyTasks(src.client, "S", dst.client, "T", ["b"], { dryRun: false, includeChecklist: false, allowDuplicates: false });
+    expect(result.results[0]).toMatchObject({ status: "error", warning: expect.stringContaining("check the target list") });
     expect(JSON.stringify(result)).not.toContain("boom");
   });
 
@@ -249,7 +253,7 @@ describe("listTasksWithMeta paging fallback", () => {
 describe("tool input schemas", () => {
   it("defaults bulk writes to preview and rejects duplicate ids and oversized batches", () => {
     const copy = z.object(copyTasksInputShape);
-    expect(copy.parse({ list_id: "S", task_ids: ["a"], target_list_id: "T" })).toMatchObject({ dry_run: true, mode: "copy", allow_duplicates: false });
+    expect(copy.parse({ list_id: "S", task_ids: ["a"], target_list_id: "T" })).toMatchObject({ dry_run: true, allow_duplicates: false });
     expect(copy.safeParse({ list_id: "S", task_ids: ["a", "a"], target_list_id: "T" }).success).toBe(false);
     const bulk = z.object(bulkTaskActionInputShape);
     expect(bulk.parse({ list_id: "L", action: "delete", items: [{ task_id: "1", expected_title: "x" }] })).toMatchObject({ dry_run: true, only_completed: true });
@@ -259,5 +263,17 @@ describe("tool input schemas", () => {
   it("keeps list_tasks and search_tasks backward compatible", () => {
     expect(z.object(listTasksInputShape).parse({ list_id: "L" })).toMatchObject({ max_items: 50, status: "all", sort: "none" });
     expect(z.object(searchTasksInputShape).parse({ list_id: "L", query: "mælk" })).toMatchObject({ include_completed: true, max_items: 50 });
+  });
+});
+
+describe("tool annotations", () => {
+  it("marks every tool as closed-world and copy_tasks as non-destructive", async () => {
+    const { registerAllTools } = await import("../../src/tools/registerAll.js");
+    const registerTool = vi.fn();
+    registerAllTools({ registerTool } as never, { profileAlias: "nadia", correlationId: "t" });
+    const annotations = Object.fromEntries(registerTool.mock.calls.map(([name, def]) => [name, def.annotations]));
+    for (const [name, a] of Object.entries(annotations)) expect(a, name).toMatchObject({ openWorldHint: false });
+    expect(annotations.copy_tasks).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(annotations.bulk_task_action).toMatchObject({ destructiveHint: true });
   });
 });

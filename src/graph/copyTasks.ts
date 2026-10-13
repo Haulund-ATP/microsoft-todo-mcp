@@ -4,16 +4,21 @@ import { toGraphErrorInfo } from "./client.js";
 import { normalizeTitle } from "./taskQuery.js";
 
 /**
- * Copies (or moves) tasks between lists, optionally across Microsoft
- * accounts, including their checklist. Replaces the create_task_list →
- * list_tasks → list_checklist_items → create_task × N sequence a chat
- * client otherwise has to run by hand, which loses notes formatting,
- * recurrence and checked state along the way.
+ * Copies tasks between lists, optionally across Microsoft accounts,
+ * including their checklist. Replaces the create_task_list → list_tasks →
+ * list_checklist_items → create_task × N sequence a chat client otherwise
+ * has to run by hand, which loses notes formatting, recurrence and checked
+ * state along the way.
+ *
+ * Copy-only: the source is never modified. Moving is copy, check, then
+ * bulk_task_action delete — keeping deletion in its own tool lets this one
+ * be non-destructive, which ChatGPT's safety checks require before they let
+ * a cross-account write through.
  *
  * Safety model mirrors bulk rename: dry_run previews by default; a task
  * whose title already exists in the target is skipped unless duplicates are
- * allowed, so a retried request doesn't create a second copy; a move only
- * deletes the source after the copy was read back and matched.
+ * allowed, so a retried request doesn't create a second copy; every copy is
+ * read back and compared.
  */
 
 /** Fields copied verbatim. Read-only/server-owned ones (id, dates, etag, linkedResources) are not. */
@@ -47,14 +52,7 @@ export function buildCopyPayload(raw: Record<string, unknown>, fields: readonly 
   return payload;
 }
 
-export type CopyStatus =
-  | "preview"
-  | "exists"
-  | "copied"
-  | "moved"
-  | "copied_not_deleted"
-  | "inconsistent"
-  | "error";
+export type CopyStatus = "preview" | "exists" | "copied" | "inconsistent" | "error";
 
 export interface CopyResult {
   task_id: string;
@@ -66,7 +64,6 @@ export interface CopyResult {
 }
 
 export interface CopyOptions {
-  mode: "copy" | "move";
   dryRun: boolean;
   includeChecklist: boolean;
   allowDuplicates: boolean;
@@ -92,7 +89,7 @@ export async function copyTasks(
     while (next < taskIds.length) {
       const index = next++;
       const taskId = taskIds[index]!;
-      let stage: "read" | "create" | "delete" = "read";
+      let stage: "read" | "create" = "read";
       let newTaskId: string | undefined;
       try {
         const raw = await todo.getTaskRaw(source, sourceListId, taskId);
@@ -131,32 +128,23 @@ export async function copyTasks(
         if (readBack.title !== title || readBackChecklist.length !== checklist.length) {
           results[index] = {
             ...base, status: "inconsistent", new_task_id: created.id,
-            warning: "The copy could not be confirmed on read-back; the source was left untouched. Inspect the new task before retrying.",
+            warning: "The copy could not be confirmed on read-back. Inspect the new task before retrying or deleting the original.",
           };
           continue;
         }
-
-        if (options.mode === "move") {
-          stage = "delete";
-          await todo.deleteTask(source, sourceListId, taskId);
-          results[index] = { ...base, status: "moved", new_task_id: created.id, warning };
-        } else {
-          results[index] = { ...base, status: "copied", new_task_id: created.id, warning };
-        }
+        results[index] = { ...base, status: "copied", new_task_id: created.id, warning };
       } catch {
         // Never surface raw Graph/auth errors (they can contain internal data).
         results[index] = {
           task_id: taskId,
-          status: stage === "delete" ? "copied_not_deleted" : "error",
+          status: "error",
           new_task_id: newTaskId,
           warning:
             stage === "read"
               ? "The source task could not be read; nothing was copied."
-              : stage === "create"
-                ? newTaskId
-                  ? "The task was created but its checklist may be incomplete; inspect new_task_id before retrying."
-                  : "Creating the copy failed or its result is unknown; check the target list before retrying."
-                : "The copy succeeded but deleting the source failed; the task now exists in both lists.",
+              : newTaskId
+                ? "The task was created but its checklist may be incomplete; inspect new_task_id before retrying."
+                : "Creating the copy failed or its result is unknown; check the target list before retrying.",
         };
       }
     }
@@ -165,13 +153,11 @@ export async function copyTasks(
 
   const count = (s: CopyStatus) => results.filter((r) => r.status === s).length;
   return {
-    mode: options.mode,
     dry_run: options.dryRun,
     requested: taskIds.length,
     copied: count("copied"),
-    moved: count("moved"),
     skipped_existing: count("exists"),
-    errors: count("error") + count("inconsistent") + count("copied_not_deleted"),
+    errors: count("error") + count("inconsistent"),
     results,
   };
 }

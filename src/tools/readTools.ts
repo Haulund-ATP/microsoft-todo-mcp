@@ -45,7 +45,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
       title: "List task lists",
       description: "Lists all Microsoft To Do task lists (e.g. 'Tasks', 'Groceries') for the resolved connection.",
       inputSchema: { ...connectionIdInputShape },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ connection_id }) =>
       runGraphTool(ctx, "list_task_lists", connection_id, (client) => todo.listTaskLists(client))
@@ -57,7 +57,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
       title: "Get task list",
       description: "Gets a single task list by id.",
       inputSchema: { list_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, connection_id }) =>
       runGraphTool(ctx, "get_task_list", connection_id, (client) => todo.getTaskList(client, list_id))
@@ -73,7 +73,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
         "date, and sort. Returns `matched` (how many tasks pass the filters, even beyond max_items) so counts don't " +
         "need a second call. For counts, duplicates and age breakdowns of a whole list, prefer summarize_list.",
       inputSchema: listTasksInputShape,
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, max_items, status, created_after, created_before, completed_before, sort, connection_id }) =>
       runGraphTool(ctx, "list_tasks", connection_id, async (client) => {
@@ -111,7 +111,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
         "and groups of likely duplicates (titles equal ignoring case, accents and punctuation). Use this instead of " +
         "paging through list_tasks to count, age or de-duplicate a list.",
       inputSchema: { list_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, connection_id }) =>
       runGraphTool(ctx, "summarize_list", connection_id, async (client) => {
@@ -133,7 +133,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
       title: "Get task",
       description: "Gets a single task by id within a task list.",
       inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, task_id, connection_id }) =>
       runGraphTool(ctx, "get_task", connection_id, (client) => todo.getTask(client, list_id, task_id))
@@ -145,7 +145,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
       title: "List checklist items",
       description: "Lists the checklist (sub-item) entries on a task, including their item_id, text, and checked state.",
       inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, task_id, connection_id }) =>
       runGraphTool(ctx, "list_checklist_items", connection_id, (client) =>
@@ -162,7 +162,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
         "fresh Graph reads (list, task, and checklistItems are each fetched live — nothing is cached). Useful for " +
         "verifying actual server-side state, e.g. across two accounts on a shared list.",
       inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, task_id, connection_id }) =>
       runGraphTool(ctx, "get_task_with_checklist", connection_id, async (client) => {
@@ -189,7 +189,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
         "look them all up in one call (preferred over calling this repeatedly), and omit list_id to search every " +
         "list. Returns compact rows grouped per query, each with its list.",
       inputSchema: searchTasksInputShape,
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, query, queries, include_completed, max_items, connection_id }) => {
       const all = [...new Set([...(query ? [query] : []), ...(queries ?? [])])];
@@ -210,7 +210,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
         max_items: z.number().int().positive().max(500).default(100),
         ...connectionIdInputShape,
       },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, max_items, connection_id }) =>
       runGraphTool(ctx, "list_overdue_tasks", connection_id, async (client) => {
@@ -236,7 +236,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
         max_items: z.number().int().positive().max(500).default(100),
         ...connectionIdInputShape,
       },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, from, to, max_items, connection_id }) =>
       runGraphTool(ctx, "list_tasks_due_between", connection_id, async (client) => {
@@ -261,7 +261,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
         max_items: z.number().int().positive().max(500).default(100),
         ...connectionIdInputShape,
       },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ list_id, max_items, connection_id }) =>
       runGraphTool(ctx, "list_completed_tasks", connection_id, async (client) => {

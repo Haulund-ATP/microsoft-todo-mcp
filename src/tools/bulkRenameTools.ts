@@ -34,7 +34,7 @@ export function registerBulkRenameTools(server: McpServer, ctx: ToolContext): vo
       "Use location prefixes such as 'Hylde – ' to prepare alphabetical sorting. " +
       "This does NOT reorder tasks or change the To Do app's sort setting; select Alphabetically in the app.",
     inputSchema: bulkRenameInputShape,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ list_id, updates, dry_run, connection_id }) =>
     runGraphTool(ctx, "bulk_rename_tasks", connection_id, (client) => bulkRenameTasks(client, list_id, updates, dry_run))
   );

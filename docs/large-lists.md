@@ -28,14 +28,20 @@ All of them use the usual profile routing: on a bound route
   call, and `list_id` may be omitted to search every list. Each list is read
   once and every query matched locally, ignoring case and accents. `query`
   (single text) still works.
+- **`get_tasks`** — full details (notes, dates, status) for up to 100 tasks
+  of one list in one call, plus checklists with `include_checklist: true`.
+  Missing tasks come back as `not_found` per item. Use it to verify a
+  `copy_tasks` or `bulk_task_action` run; ChatGPT otherwise calls
+  `get_task` once per task and hits its own per-turn tool-call limit.
 - `list_completed_tasks`, `list_overdue_tasks` and `list_tasks_due_between`
   now also return compact rows.
 
-Listing reads 100 tasks per Graph page with only the needed fields
-(`$select`). Graph's To Do documentation doesn't state the page-size limit
-or `$select` support for tasks, so if Graph answers 400 the server falls
-back to its previous 50-per-page, all-fields reads for the rest of the
-process and logs one warning.
+Listing reads 100 tasks per Graph page. It also tries `$select` (only the
+needed fields), but production Graph rejects `$select` on To Do tasks with
+`invalidRequest` (2026-10-13), so each process detects that on its first
+listing and stops sending it. Each optimization is probed separately and
+logged ("Graph rejected task listing shape"), so a later change on
+Microsoft's side shows up in the logs.
 
 ## Writing
 

@@ -38,3 +38,19 @@ export async function decryptTokenCache(
   const key = await loadKey();
   return decryptString(payload, key, Buffer.from(connectionId, "utf8"));
 }
+
+/**
+ * Same key, for snapshots of deleted tasks (task content is personal data).
+ * The AAD carries a "deleted-task:" prefix plus the connection id, so a
+ * snapshot can't be passed off as a token cache or moved to another
+ * connection.
+ */
+const deletedTaskAad = (connectionId: string) => Buffer.from(`deleted-task:${connectionId}`, "utf8");
+
+export async function encryptDeletedTask(json: string, connectionId: string): Promise<EncryptedPayload> {
+  return encryptString(json, await loadKey(), deletedTaskAad(connectionId));
+}
+
+export async function decryptDeletedTask(payload: EncryptedPayload, connectionId: string): Promise<string> {
+  return decryptString(payload, await loadKey(), deletedTaskAad(connectionId));
+}

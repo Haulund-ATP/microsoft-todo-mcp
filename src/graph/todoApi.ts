@@ -43,6 +43,8 @@ export interface TaskItem {
   etag?: string;
   /** True when the task has a recurrence pattern. */
   recurring?: boolean;
+  /** Graph's isReminderOn; reminderDateTime can linger after a reminder is switched off. */
+  reminderOn?: boolean;
   categories?: string[];
 }
 
@@ -139,6 +141,7 @@ function mapTask(raw: Record<string, unknown>): TaskItem {
     lastModifiedDateTime: raw.lastModifiedDateTime as string | undefined,
     etag: raw["@odata.etag"] as string | undefined,
     recurring: raw.recurrence ? true : undefined,
+    reminderOn: typeof raw.isReminderOn === "boolean" ? raw.isReminderOn : undefined,
     categories: Array.isArray(raw.categories) && raw.categories.length ? (raw.categories as string[]) : undefined,
   };
 }
@@ -391,6 +394,19 @@ export async function addChecklistItem(
       .post(isChecked === undefined ? { displayName } : { displayName, isChecked })
   );
   return mapChecklistItem(raw);
+}
+
+/** Every task of a list exactly as Graph returns it (for undo snapshots before deleting the list). */
+export async function listTasksRaw(
+  client: Client,
+  listId: string,
+  maxItems: number
+): Promise<{ items: Record<string, unknown>[]; truncated: boolean }> {
+  return fetchAllPagesWithMeta<Record<string, unknown>>(
+    client,
+    client.api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`).top(50),
+    { maxItems }
+  );
 }
 
 /** The task exactly as Graph returns it, for copying fields this module doesn't model. */

@@ -1,5 +1,6 @@
 import { getTableClient, TABLE_NAMES } from "./clients.js";
 import { logger } from "../logging/logger.js";
+import { DeletedTasksRepo } from "./deletedTasksRepo.js";
 
 /**
  * Deletes expired one-time OAuth rows. Nothing removed them before, so the
@@ -45,9 +46,15 @@ const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
  */
 export function scheduleOAuthCleanup(): void {
   const run = () =>
-    deleteExpiredOAuthRows()
-      .then((deleted) => logger.info({ deleted }, "expired oauth rows cleaned up"))
-      .catch((err) => logger.warn({ err: err instanceof Error ? err.message : String(err) }, "oauth cleanup failed"));
+    Promise.all([
+      deleteExpiredOAuthRows()
+        .then((deleted) => logger.info({ deleted }, "expired oauth rows cleaned up"))
+        .catch((err) => logger.warn({ err: err instanceof Error ? err.message : String(err) }, "oauth cleanup failed")),
+      new DeletedTasksRepo()
+        .deleteExpired()
+        .then((deleted) => logger.info({ deleted }, "expired deleted-task snapshots cleaned up"))
+        .catch((err) => logger.warn({ err: err instanceof Error ? err.message : String(err) }, "snapshot cleanup failed")),
+    ]);
   void run();
   setInterval(run, CLEANUP_INTERVAL_MS).unref();
 }

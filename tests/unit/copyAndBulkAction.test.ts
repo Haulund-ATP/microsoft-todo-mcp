@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { Client } from "@microsoft/microsoft-graph-client";
 import { buildCopyPayload, copyTasks } from "../../src/graph/copyTasks.js";
 import { bulkTaskAction } from "../../src/graph/bulkTaskAction.js";
+import { deletionBlocker, restoreSnapshot, snapshotAndDeleteList, snapshotDeleter } from "../../src/graph/safeDelete.js";
+import type { DeletedTaskSnapshot } from "../../src/storage/deletedTasksRepo.js";
 import { searchTasksMulti } from "../../src/graph/search.js";
 import { getTasksBatch } from "../../src/graph/getTasks.js";
 import * as todo from "../../src/graph/todoApi.js";
@@ -29,7 +31,7 @@ function fakeAccount(lists: Record<string, { name?: string; tasks: Task[] }>, op
         async get() {
           if (!listId) return { value: Object.entries(lists).map(([id, l]) => ({ id, displayName: l.name ?? id })) };
           if (!list) throw notFound();
-          if (!taskId) return { value: list.tasks } ;
+          if (!taskId) return path.split("?")[0]!.endsWith("/tasks") ? { value: list.tasks } : { id: listId, displayName: list.name ?? listId };
           const t = find();
           if (!t) throw notFound();
           if (checklist) return { value: checklists.get(t.id) ?? [] };
@@ -53,6 +55,7 @@ function fakeAccount(lists: Record<string, { name?: string; tasks: Task[] }>, op
         },
         async delete() {
           writes.push({ method: "delete", path });
+          if (!taskId) { delete lists[decodeURIComponent(listId!)]; return; }
           list!.tasks = list!.tasks.filter((t) => t.id !== decodeURIComponent(taskId!));
         },
       };
@@ -158,11 +161,41 @@ describe("bulkTaskAction", () => {
     expect(acc.writes).toEqual([]);
   });
 
-  it("deletes and verifies only the eligible tasks", async () => {
+  it("deletes and verifies only the eligible tasks, snapshotting each first", async () => {
     const acc = account();
-    const result = await bulkTaskAction(acc.client, "L", "delete", items, { dryRun: false, onlyCompleted: true });
+    const repo = fakeSnapshotRepo();
+    const deleter = snapshotDeleter(acc.client, "conn", repo, "bulk_task_action");
+    const result = await bulkTaskAction(acc.client, "L", "delete", items, { dryRun: false, onlyCompleted: true, deleter });
     expect(result.verified).toBe(1);
+    expect(result.results[0]).toMatchObject({ status: "verified", snapshot_id: "snap-1" });
+    expect(repo.saved).toEqual([expect.objectContaining({ taskId: "1", listId: "L", connectionId: "conn", task: expect.objectContaining({ title: "Old" }) })]);
     expect(acc.lists.L.tasks.map((t) => t.id)).toEqual(["2", "3"]);
+  });
+
+  it("never deletes an open task with a date, even with only_completed=false (13 Oct B-vitamin)", async () => {
+    const acc = fakeAccount({ L: { tasks: [
+      { id: "b", title: "Køb B vitamin", status: "notStarted", dueDateTime: { dateTime: "2026-10-20T00:00:00", timeZone: "UTC" } },
+      { id: "r", title: "Pille", status: "notStarted", reminderDateTime: { dateTime: "2026-10-20T08:00:00", timeZone: "UTC" }, isReminderOn: true },
+      { id: "p", title: "Undated", status: "notStarted" },
+    ] } });
+    const repo = fakeSnapshotRepo();
+    const deleter = snapshotDeleter(acc.client, "conn", repo, "bulk_task_action");
+    const req = [{ task_id: "b", expected_title: "Køb B vitamin" }, { task_id: "r", expected_title: "Pille" }, { task_id: "p", expected_title: "Undated" }];
+    const preview = await bulkTaskAction(acc.client, "L", "delete", req, { dryRun: true, onlyCompleted: false, deleter });
+    expect(preview.results.map((r) => r.status)).toEqual(["blocked_has_schedule", "blocked_has_schedule", "preview"]);
+    const applied = await bulkTaskAction(acc.client, "L", "delete", req, { dryRun: false, onlyCompleted: false, deleter });
+    expect(applied.results.map((r) => r.status)).toEqual(["blocked_has_schedule", "blocked_has_schedule", "verified"]);
+    expect(applied.results[0]!.warning).toContain("checklist");
+    expect(acc.lists.L.tasks.map((t) => t.id)).toEqual(["b", "r"]);
+  });
+
+  it("deletes nothing when the snapshot can't be saved", async () => {
+    const acc = account();
+    const repo = { save: async () => { throw new Error("storage down"); } };
+    const deleter = snapshotDeleter(acc.client, "conn", repo, "bulk_task_action");
+    const result = await bulkTaskAction(acc.client, "L", "delete", items.slice(0, 1), { dryRun: false, onlyCompleted: true, deleter });
+    expect(result.results[0]!.status).toBe("error");
+    expect(acc.lists.L.tasks.map((t) => t.id)).toEqual(["1", "2", "3"]);
   });
 
   it("completes open tasks and treats already-completed ones as unchanged", async () => {
@@ -310,5 +343,59 @@ describe("getTasksBatch", () => {
     expect(schema.parse({ list_id: "L", task_ids: ["a"] }).include_checklist).toBe(false);
     expect(schema.safeParse({ list_id: "L", task_ids: ["a", "a"] }).success).toBe(false);
     expect(schema.safeParse({ list_id: "L", task_ids: Array.from({ length: 101 }, (_, i) => `${i}`) }).success).toBe(false);
+  });
+});
+function fakeSnapshotRepo() {
+  const saved: Array<Omit<DeletedTaskSnapshot, "snapshotId">> = [];
+  return { saved, save: async (s: Omit<DeletedTaskSnapshot, "snapshotId">) => { saved.push(s); return `snap-${saved.length}`; } };
+}
+
+describe("deletion guard and undo", () => {
+  it.each([
+    [{ status: "completed", dueDateTime: { dateTime: "x" } }, false],
+    [{ status: "notStarted" }, false],
+    [{ status: "notStarted", reminderDateTime: { dateTime: "x" }, isReminderOn: false }, false],
+    [{ status: "notStarted", dueDateTime: { dateTime: "x" } }, true],
+    [{ status: "inProgress", recurrence: { pattern: {} } }, true],
+    [{ status: "notStarted", reminderDateTime: { dateTime: "x" }, isReminderOn: true }, true],
+  ])("deletionBlocker(%o) blocks=%s", (raw, blocks) => {
+    expect(Boolean(deletionBlocker(raw))).toBe(blocks);
+  });
+
+  it("refuses to delete a list holding dated open tasks, naming them, and deletes nothing", async () => {
+    const acc = fakeAccount({ L: { name: "Apotek", tasks: [
+      { id: "1", title: "Køb B vitamin", status: "notStarted", dueDateTime: { dateTime: "2026-10-20T00:00:00" } },
+      { id: "2", title: "Done", status: "completed" },
+    ] } });
+    const repo = fakeSnapshotRepo();
+    await expect(snapshotAndDeleteList(acc.client, "conn", repo, "L")).rejects.toThrow(/Køb B vitamin/);
+    expect(repo.saved).toEqual([]);
+    expect(acc.lists.L).toBeDefined();
+  });
+
+  it("snapshots every task with its checklist before deleting a list", async () => {
+    const acc = fakeAccount({ L: { name: "Gammel", tasks: [{ id: "1", title: "A", status: "completed" }, { id: "2", title: "B" }] } });
+    acc.checklists.set("1", [{ id: "c", displayName: "x", isChecked: true }]);
+    const repo = fakeSnapshotRepo();
+    expect(await snapshotAndDeleteList(acc.client, "conn", repo, "L")).toEqual({ snapshots: 2 });
+    expect(repo.saved.map((s) => [s.taskId, s.listName, s.checklist.length, s.deletedBy])).toEqual([
+      ["1", "Gammel", 1, "delete_task_list"],
+      ["2", "Gammel", 0, "delete_task_list"],
+    ]);
+    expect(acc.lists.L).toBeUndefined();
+  });
+
+  it("restores a snapshot with dates, status and checked checklist into a chosen list", async () => {
+    const acc = fakeAccount({ New: { tasks: [] } });
+    const snapshot: DeletedTaskSnapshot = {
+      snapshotId: "s", connectionId: "conn", listId: "Gone", taskId: "old", deletedAt: "2026-10-13T08:30:00.000Z", deletedBy: "bulk_task_action",
+      task: { id: "old", title: "Køb B vitamin", status: "notStarted", dueDateTime: { dateTime: "2026-10-20T00:00:00", timeZone: "UTC" }, createdDateTime: "2025-01-01" },
+      checklist: [{ id: "c", displayName: "Apotek", isChecked: true }],
+    };
+    const restored = await restoreSnapshot(acc.client, snapshot, "New");
+    expect(restored).toMatchObject({ listId: "New", checklistItems: 1 });
+    expect(acc.lists.New.tasks[0]).toMatchObject({ title: "Køb B vitamin", dueDateTime: { dateTime: "2026-10-20T00:00:00" } });
+    expect(acc.lists.New.tasks[0]).not.toHaveProperty("createdDateTime");
+    expect(acc.checklists.get(restored.task.id)).toEqual([expect.objectContaining({ displayName: "Apotek", isChecked: true })]);
   });
 });

@@ -15,7 +15,7 @@ import { ownerLoginRouter } from "../admin/ownerLogin.js";
 import { connectRouter } from "../admin/connectRouter.js";
 import { accountsRouter } from "../admin/accountsRouter.js";
 import { profilesRouter } from "../profiles/router.js";
-import { adminRateLimiter, authRateLimiter } from "../admin/rateLimit.js";
+import { adminRateLimiter, authRateLimiter, mcpRateLimiter, tokenRateLimiter } from "../admin/rateLimit.js";
 
 export function createApp() {
   const app = express();
@@ -59,8 +59,14 @@ export function createApp() {
   app.use(healthRouter);
   app.use(wellKnownRouter);
 
+  // Each limiter is mounted on its own paths only; a path-less app.use here
+  // would also throttle every route registered after it (see rateLimit.ts).
+  app.use(["/oauth/token", "/oauth/revoke"], tokenRateLimiter);
+  app.use(["/oauth/authorize", "/oauth/register", "/oauth/owner", "/oauth/microsoft", "/admin/connect"], authRateLimiter);
+  app.use("/accounts", adminRateLimiter);
+  app.use("/mcp", mcpRateLimiter);
+
   // OAuth 2.1 authorization server + owner login + Microsoft connect flow.
-  app.use(authRateLimiter);
   app.use(registerRouter);
   app.use(authorizeRouter);
   app.use(tokenRouter);
@@ -69,7 +75,6 @@ export function createApp() {
   app.use(connectRouter);
 
   // Admin UI.
-  app.use(adminRateLimiter);
   app.use(accountsRouter);
 
   app.get("/", (_req, res) => {

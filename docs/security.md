@@ -30,7 +30,14 @@ connectors they control. The primary threats considered:
 - `/health`, `/ready`, `/version` are intentionally unauthenticated but
   contain no tenant/account/secret data — see the "no sensitive data" rule
   enforced by code review on `src/http/health.ts`.
-- Rate limiting (`src/admin/rateLimit.ts`) on the OAuth and admin surfaces.
+- Rate limiting (`src/admin/rateLimit.ts`), per client and per surface:
+  20/min for interactive sign-in and consent, 120/min for `/oauth/token`
+  and `/oauth/revoke` (ChatGPT refreshes once per tool call), 60/min for
+  `/accounts`, 600/min for `/mcp`. Clients are identified by
+  `x-envoy-external-address`, which Container Apps' ingress sets to the
+  real client address and overwrites if a client sends its own (checked
+  against production). `req.ip` would be the platform's internal hop and
+  put every client in one shared budget.
 
 **(2) Leaked MCP token:**
 - Access tokens are short-lived JWTs (default 10 minutes) — a leaked

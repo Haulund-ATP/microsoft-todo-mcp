@@ -199,15 +199,31 @@ const COMPACT_TASK_FIELDS = [
 
 /**
  * Listing ~500 tasks took 4.5–8.5 s at 50 per page (10 sequential Graph
- * round trips). Larger pages and $select cut that, but Graph's To Do docs
- * don't state the page-size ceiling or $select support for tasks, so the
- * first 400 Bad Request switches this process back to the old shape for
- * good rather than failing the call.
+ * round trips). Larger pages ($top=100) and $select cut that, but Graph's
+ * To Do docs don't state the page-size ceiling or $select support for
+ * tasks, and production rejected the combination with a 400 (2026-10-13).
+ * Each optimization is therefore probed separately: a request shape is
+ * tried from most to least optimized, and when a shape succeeds right
+ * after one that differed only by an extra optimization, that optimization
+ * is marked unsupported for the rest of the process. A 400 that every
+ * shape gets (e.g. a bad filter) marks nothing and is rethrown.
  */
-let optimizedTaskPaging = true;
+type Support = "unknown" | "ok" | "unsupported";
+const pagingSupport: { top100: Support; select: Support } = { top100: "unknown", select: "unknown" };
 
 export function _resetTaskPagingForTests(): void {
-  optimizedTaskPaging = true;
+  pagingSupport.top100 = "unknown";
+  pagingSupport.select = "unknown";
+}
+
+interface PageShape {
+  top100: boolean;
+  select: boolean;
+}
+
+/** Graph's 400 text can echo the $filter (task titles); keep the gist, drop quoted values. */
+function sanitizeGraphMessage(message: string): string {
+  return message.replace(/'[^']*'/g, "'…'").slice(0, 200);
 }
 
 export async function listTasksWithMeta(
@@ -215,30 +231,62 @@ export async function listTasksWithMeta(
   listId: string,
   options: ListTasksOptions = {}
 ): Promise<{ tasks: TaskItem[]; truncated: boolean }> {
-  const build = (optimized: boolean) => {
-    let request = client.api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`).top(optimized ? 100 : 50);
-    if (optimized && options.compact) request = request.select(COMPACT_TASK_FIELDS.join(","));
+  const run = async (shape: PageShape) => {
+    let request = client.api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`).top(shape.top100 ? 100 : 50);
+    if (shape.select) request = request.select(COMPACT_TASK_FIELDS.join(","));
     if (options.filter) request = request.filter(options.filter);
-    return request;
-  };
-  const run = async (optimized: boolean) => {
-    const { items, truncated } = await fetchAllPagesWithMeta<Record<string, unknown>>(client, build(optimized), {
+    const { items, truncated } = await fetchAllPagesWithMeta<Record<string, unknown>>(client, request, {
       maxItems: options.maxItems,
     });
     return { tasks: items.map(mapTask), truncated };
   };
-  if (!optimizedTaskPaging) return run(false);
-  try {
-    return await run(true);
-  } catch (err) {
-    if (toGraphErrorInfo(err).statusCode !== 400) throw err;
-    // Only blame the paging shape if the old shape then succeeds; a 400
-    // caused by the filter itself fails both ways and is rethrown.
-    const result = await run(false);
-    optimizedTaskPaging = false;
-    logger.warn({ graphStatusCode: 400 }, "Graph rejected $top=100/$select on tasks; falling back to 50 per page");
-    return result;
+
+  const shapes: PageShape[] = [
+    { top100: true, select: true },
+    { top100: false, select: true },
+    { top100: true, select: false },
+    { top100: false, select: false },
+  ].filter(
+    (s) =>
+      (!s.top100 || pagingSupport.top100 !== "unsupported") &&
+      (!s.select || (options.compact && pagingSupport.select !== "unsupported"))
+  );
+  // Without `compact`, the select variants collapse into duplicates.
+  const unique = shapes.filter((s, i) => shapes.findIndex((o) => o.top100 === s.top100 && o.select === s.select) === i);
+
+  const failed: PageShape[] = [];
+  let lastError: unknown;
+  for (const shape of unique) {
+    try {
+      const result = await run(shape);
+      if (shape.top100) pagingSupport.top100 = "ok";
+      if (shape.select) pagingSupport.select = "ok";
+      for (const f of failed) {
+        // f = this shape plus exactly one extra optimization => that one is the culprit.
+        const extraTop = f.top100 && !shape.top100 && f.select === shape.select;
+        const extraSelect = f.select && !shape.select && f.top100 === shape.top100;
+        if (extraTop && pagingSupport.top100 !== "ok") pagingSupport.top100 = "unsupported";
+        if (extraSelect && pagingSupport.select !== "ok") pagingSupport.select = "unsupported";
+      }
+      if (failed.length) {
+        logger.warn(
+          { graphStatusCode: 400, top100Support: pagingSupport.top100, selectSupport: pagingSupport.select },
+          "Graph rejected an optimized task listing; adjusted paging"
+        );
+      }
+      return result;
+    } catch (err) {
+      const info = toGraphErrorInfo(err);
+      if (info.statusCode !== 400) throw err;
+      logger.warn(
+        { graphStatusCode: 400, graphErrorCode: info.code, graphErrorMessage: sanitizeGraphMessage(info.message), pageShape: shape },
+        "Graph rejected task listing shape"
+      );
+      failed.push(shape);
+      lastError = err;
+    }
   }
+  throw lastError;
 }
 
 export async function listTasks(client: Client, listId: string, options: ListTasksOptions = {}): Promise<TaskItem[]> {

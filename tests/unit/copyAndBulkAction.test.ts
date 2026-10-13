@@ -205,6 +205,30 @@ describe("listTasksWithMeta paging fallback", () => {
     expect(tops).toEqual([100, 50, 50]);
   });
 
+  it("keeps the larger page size when only $select is rejected", async () => {
+    const shapes: string[] = [];
+    const client = {
+      api: () => {
+        let top = 0;
+        let selected = false;
+        const chain = {
+          top: (n: number) => { top = n; return chain; },
+          select: () => { selected = true; return chain; },
+          filter: () => chain,
+          get: async () => {
+            shapes.push(`${top}${selected ? "+select" : ""}`);
+            if (selected) throw Object.assign(new Error("bad"), { statusCode: 400, code: "BadRequest" });
+            return { value: [{ id: "1", title: "t" }] };
+          },
+        };
+        return chain;
+      },
+    } as unknown as Client;
+    await todo.listTasksWithMeta(client, "L", { compact: true });
+    await todo.listTasksWithMeta(client, "L", { compact: true });
+    expect(shapes).toEqual(["100+select", "50+select", "100", "100"]);
+  });
+
   it("does not disable the optimization when the request fails for another reason", async () => {
     const tops: number[] = [];
     const client = {

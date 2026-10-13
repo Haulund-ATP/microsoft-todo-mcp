@@ -51,14 +51,14 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
   const log = childLogger({ correlationId: req.correlationId, route: "/oauth/authorize" });
   const parsed = authorizeQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    log.warn({ oauthErrorCategory: "authorize_invalid_request" }, "authorize request rejected");
+    log.warn({ rejectReason: "authorize_invalid_request" }, "authorize request rejected");
     res.status(400).json({ error: "invalid_request", error_description: parsed.error.message });
     return;
   }
   const params = parsed.data;
 
   if (!canonicalResource(params.resource)) {
-    log.warn({ oauthErrorCategory: "authorize_unknown_resource" }, "authorize request rejected");
+    log.warn({ rejectReason: "authorize_unknown_resource" }, "authorize request rejected");
     res.status(400).json({ error: "invalid_target", error_description: "Unknown resource." });
     return;
   }
@@ -66,7 +66,7 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
   const clientsRepo = new OAuthClientsRepo();
   const client = await clientsRepo.get(params.client_id);
   if (!client) {
-    log.warn({ oauthErrorCategory: "authorize_unknown_client" }, "authorize request rejected");
+    log.warn({ rejectReason: "authorize_unknown_client" }, "authorize request rejected");
     res.status(400).json({ error: "invalid_client" });
     return;
   }
@@ -74,7 +74,7 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
   if (!redirectUris.includes(params.redirect_uri)) {
     // Do NOT redirect on a redirect_uri mismatch — that would itself be an
     // open-redirect-adjacent hazard. Fail closed with a JSON error instead.
-    log.warn({ oauthErrorCategory: "authorize_redirect_mismatch" }, "authorize request rejected");
+    log.warn({ rejectReason: "authorize_redirect_mismatch" }, "authorize request rejected");
     res.status(400).json({ error: "invalid_request", error_description: "redirect_uri does not match a registered value exactly." });
     return;
   }
@@ -100,21 +100,21 @@ authorizeRouter.post("/oauth/authorize/approve", requireCsrf, async (req, res) =
   const log = childLogger({ correlationId: req.correlationId, route: "/oauth/authorize/approve" });
   const parsed = authorizeQuerySchema.safeParse(req.body);
   if (!parsed.success) {
-    log.warn({ oauthErrorCategory: "approve_invalid_request" }, "consent approval rejected");
+    log.warn({ rejectReason: "approve_invalid_request" }, "consent approval rejected");
     res.status(400).json({ error: "invalid_request" });
     return;
   }
   const params = parsed.data;
   const session = readOwnerSession(req);
   if (!isOwner(session)) {
-    log.warn({ oauthErrorCategory: "approve_login_required" }, "consent approval rejected");
+    log.warn({ rejectReason: "approve_login_required" }, "consent approval rejected");
     res.status(401).json({ error: "login_required" });
     return;
   }
 
   const resource = canonicalResource(params.resource);
   if (!resource) {
-    log.warn({ oauthErrorCategory: "approve_unknown_resource" }, "consent approval rejected");
+    log.warn({ rejectReason: "approve_unknown_resource" }, "consent approval rejected");
     res.status(400).json({ error: "invalid_target" });
     return;
   }
@@ -122,7 +122,7 @@ authorizeRouter.post("/oauth/authorize/approve", requireCsrf, async (req, res) =
   const clientsRepo = new OAuthClientsRepo();
   const redirectUris = await clientsRepo.listRedirectUris(params.client_id);
   if (!redirectUris.includes(params.redirect_uri)) {
-    log.warn({ oauthErrorCategory: "approve_redirect_mismatch" }, "consent approval rejected");
+    log.warn({ rejectReason: "approve_redirect_mismatch" }, "consent approval rejected");
     res.status(400).json({ error: "invalid_request" });
     return;
   }

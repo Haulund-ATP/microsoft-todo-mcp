@@ -17,7 +17,7 @@ export interface LogFields {
   responseTimeMs?: number;
   graphStatusCode?: number;
   throttled?: boolean;
-  oauthErrorCategory?: string;
+  rejectReason?: string;
   deploymentVersion?: string;
   route?: string;
   httpMethod?: string;

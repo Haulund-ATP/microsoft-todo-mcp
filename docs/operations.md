@@ -59,7 +59,7 @@ ContainerAppConsoleLogs_CL
 ### "ChatGPT asks me to reconnect" — why was a token rejected?
 
 Every rejected OAuth/MCP request is logged at `warn` with an
-`oauthErrorCategory`:
+`rejectReason`:
 
 | Category | Meaning |
 |---|---|
@@ -74,7 +74,7 @@ the grace window — normal for ChatGPT, not a problem.
 
 ```kusto
 ContainerAppConsoleLogs_CL
-| where Log_s has "oauthErrorCategory" or Log_s has "oauth.refresh"
+| where Log_s has "rejectReason" or Log_s has "oauth.refresh"
 | project TimeGenerated, Log_s
 | order by TimeGenerated desc
 ```

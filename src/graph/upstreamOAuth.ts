@@ -121,7 +121,7 @@ export async function completeMicrosoftSignIn(
     });
   } catch (err) {
     if (isAdminConsentError(err)) {
-      log.warn({ oauthErrorCategory: "admin_consent_required" }, "Microsoft sign-in requires admin consent");
+      log.warn({ rejectReason: "admin_consent_required" }, "Microsoft sign-in requires admin consent");
     }
     throw err;
   }

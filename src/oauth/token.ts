@@ -17,7 +17,7 @@ import { childLogger } from "../logging/logger.js";
  * revokes the entire descendant chain, treating it as a replay/compromise
  * signal — see refreshRotation.ts).
  *
- * Every rejection is logged with an `oauthErrorCategory` so a client that
+ * Every rejection is logged with an `rejectReason` so a client that
  * suddenly asks the user to reconnect can be explained from the logs alone.
  */
 
@@ -43,7 +43,7 @@ export const tokenRouter = Router();
 tokenRouter.post("/oauth/token", async (req, res) => {
   const log = childLogger({ correlationId: req.correlationId, route: "/oauth/token" });
   const reject = (r: Response, category: string, error: string, description?: string) => {
-    log.warn({ oauthErrorCategory: category }, "token request rejected");
+    log.warn({ rejectReason: category }, "token request rejected");
     r.status(400).json(description ? { error, error_description: description } : { error });
   };
 
@@ -65,7 +65,9 @@ tokenRouter.post("/oauth/token", async (req, res) => {
     const codesRepo = new OAuthCodesRepo();
     const consumed = await codesRepo.consume(body.code);
     if ("reason" in consumed) {
-      reject(res, `code_${consumed.reason}`, "invalid_grant", "Unknown, expired, or already-used code.");
+      const category =
+        consumed.reason === "consumed" ? "code_consumed" : consumed.reason === "expired" ? "code_expired" : "code_unknown";
+      reject(res, category, "invalid_grant", "Unknown, expired, or already-used code.");
       return;
     }
     const { record } = consumed;
@@ -117,14 +119,23 @@ tokenRouter.post("/oauth/token", async (req, res) => {
     newToken: () => randomBytes(32).toString("base64url"),
   });
   if (!outcome.ok) {
-    const category = `refresh_${outcome.category}`;
-    if (outcome.category === "reuse") {
-      audit({ action: "oauth.refresh_reused", correlationId: req.correlationId, outcome: "denied" });
-      reject(res, category, "invalid_grant", "Refresh token reuse detected; session revoked.");
-    } else if (outcome.category === "expired" || outcome.category === "revoked") {
-      reject(res, category, "invalid_grant", "Refresh token expired or revoked.");
-    } else {
-      reject(res, category, "invalid_grant");
+    // Literal categories only, so nothing derived from the presented token reaches the log.
+    switch (outcome.category) {
+      case "reuse":
+        audit({ action: "oauth.refresh_reused", correlationId: req.correlationId, outcome: "denied" });
+        reject(res, "refresh_reuse", "invalid_grant", "Refresh token reuse detected; session revoked.");
+        break;
+      case "expired":
+        reject(res, "refresh_expired", "invalid_grant", "Refresh token expired or revoked.");
+        break;
+      case "revoked":
+        reject(res, "refresh_revoked", "invalid_grant", "Refresh token expired or revoked.");
+        break;
+      case "client_mismatch":
+        reject(res, "refresh_client_mismatch", "invalid_grant");
+        break;
+      default:
+        reject(res, "refresh_unknown", "invalid_grant");
     }
     return;
   }

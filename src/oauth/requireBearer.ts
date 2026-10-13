@@ -25,7 +25,7 @@ export function requireBearer() {
     if (!header?.startsWith("Bearer ")) {
       // Logged at info, not warn: clients routinely probe without a token
       // first to discover the authorization server from this challenge.
-      log.info({ oauthErrorCategory: "bearer_missing" }, "bearer token missing");
+      log.info({ rejectReason: "bearer_missing" }, "bearer token missing");
       res.setHeader("WWW-Authenticate", challenge);
       res.status(401).json({ error: "invalid_token", error_description: "Missing bearer token." });
       return;
@@ -36,21 +36,24 @@ export function requireBearer() {
       req.mcpAuth = { subject: String(claims.sub), clientId: String(claims.client_id), scope: String(claims.scope) };
       next();
     } catch (err) {
-      log.warn({ oauthErrorCategory: categorizeBearerError(err) }, "bearer token rejected");
+      log.warn({ rejectReason: categorizeBearerError(err) }, "bearer token rejected");
       res.setHeader("WWW-Authenticate", `${challenge}, error="invalid_token"`);
       res.status(401).json({ error: "invalid_token" });
     }
   };
 }
 
-/** Maps a jose verification error to a short, non-sensitive log category. */
+/**
+ * Maps a jose verification error to a short log category. Returns only
+ * string literals — nothing from the error object itself is logged.
+ */
 export function categorizeBearerError(err: unknown): string {
   const { code, claim } = (err ?? {}) as { code?: string; claim?: string };
   switch (code) {
     case "ERR_JWT_EXPIRED":
       return "bearer_expired";
     case "ERR_JWT_CLAIM_VALIDATION_FAILED":
-      return claim === "aud" ? "bearer_audience_mismatch" : claim === "iss" ? "bearer_issuer_mismatch" : `bearer_claim_${claim ?? "invalid"}`;
+      return claim === "aud" ? "bearer_audience_mismatch" : claim === "iss" ? "bearer_issuer_mismatch" : "bearer_claim_invalid";
     case "ERR_JWS_SIGNATURE_VERIFICATION_FAILED":
       return "bearer_bad_signature";
     case "ERR_JWS_INVALID":

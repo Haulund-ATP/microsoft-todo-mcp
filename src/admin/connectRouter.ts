@@ -41,7 +41,7 @@ connectRouter.get("/oauth/microsoft/callback", requireOwner, async (req, res) =>
   const { code, state, error, error_description: errorDescription } = req.query;
 
   if (error) {
-    log.warn({ oauthErrorCategory: String(error) }, "Microsoft connect returned error");
+    log.warn({ rejectReason: String(error) }, "Microsoft connect returned error");
     res.status(400).send(`Connection failed: ${String(errorDescription ?? error)}`);
     return;
   }

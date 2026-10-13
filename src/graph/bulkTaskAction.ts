@@ -2,6 +2,7 @@ import type { Client } from "@microsoft/microsoft-graph-client";
 import * as todo from "./todoApi.js";
 import { toGraphErrorInfo } from "./client.js";
 import { withChecklistConsistencyCheck } from "./verification.js";
+import { DeletionBlockedError, deletionBlockerForTask, type SnapshotDeleter } from "./safeDelete.js";
 
 /**
  * Completes, reopens or deletes many tasks in one list — e.g. clearing out
@@ -9,7 +10,9 @@ import { withChecklistConsistencyCheck } from "./verification.js";
  * dry_run previews by default, every item names the title the caller
  * expects (a stale read is skipped as a conflict, never acted on), and each
  * write is confirmed by a fresh read. Deleting is limited to completed tasks
- * unless the caller explicitly opts out.
+ * unless the caller explicitly opts out; open tasks with a due date,
+ * reminder or recurrence can't be deleted at all, and every deletion is
+ * snapshotted first so it can be undone (see safeDelete.ts).
  */
 
 export type BulkAction = "complete" | "reopen" | "delete";
@@ -24,6 +27,7 @@ export type BulkActionStatus =
   | "unchanged"
   | "conflict"
   | "skipped_not_completed"
+  | "blocked_has_schedule"
   | "verified"
   | "inconsistent"
   | "error";
@@ -32,6 +36,8 @@ export interface BulkActionResult extends BulkActionItem {
   status: BulkActionStatus;
   current_title?: string;
   current_status?: string;
+  /** Undo handle for a deleted task; pass to restore_deleted_task. */
+  snapshot_id?: string;
   warning?: string;
 }
 
@@ -42,7 +48,7 @@ export async function bulkTaskAction(
   listId: string,
   action: BulkAction,
   items: BulkActionItem[],
-  options: { dryRun: boolean; onlyCompleted: boolean }
+  options: { dryRun: boolean; onlyCompleted: boolean; deleter?: SnapshotDeleter }
 ) {
   const results: BulkActionResult[] = new Array(items.length);
   let next = 0;
@@ -72,17 +78,28 @@ export async function bulkTaskAction(
           results[index] = { ...item, ...seen, status: "conflict" };
         } else if (alreadyDone) {
           results[index] = { ...item, ...seen, status: "unchanged" };
+        } else if (action === "delete" && deletionBlockerForTask(current)) {
+          results[index] = { ...item, ...seen, status: "blocked_has_schedule", warning: deletionBlockerForTask(current) };
         } else if (action === "delete" && options.onlyCompleted && current.status !== "completed") {
           results[index] = { ...item, ...seen, status: "skipped_not_completed" };
         } else if (options.dryRun) {
           results[index] = { ...item, ...seen, status: "preview" };
         } else if (action === "delete") {
-          writeAttempted = true;
-          await todo.deleteTask(client, listId, item.task_id);
+          if (!options.deleter) throw new Error("bulkTaskAction: delete requires a snapshot deleter");
+          let snapshotId: string;
+          try {
+            writeAttempted = true;
+            snapshotId = await options.deleter(listId, item.task_id);
+          } catch (err) {
+            // Re-checked on the raw task at delete time; it may have changed since the read above.
+            if (!(err instanceof DeletionBlockedError)) throw err;
+            results[index] = { ...item, ...seen, status: "blocked_has_schedule", warning: err.reason };
+            continue;
+          }
           const gone = await todo.getTask(client, listId, item.task_id).then(() => false, (err) => isNotFound(err));
           results[index] = gone
-            ? { ...item, ...seen, status: "verified" }
-            : { ...item, ...seen, status: "inconsistent", warning: "The task was still readable after deletion." };
+            ? { ...item, ...seen, status: "verified", snapshot_id: snapshotId }
+            : { ...item, ...seen, status: "inconsistent", snapshot_id: snapshotId, warning: "The task was still readable after deletion." };
         } else {
           // Same checklist before/after comparison as complete_task/reopen_task,
           // given the shared-list checklist-loss history (docs/security.md).
@@ -125,6 +142,7 @@ export async function bulkTaskAction(
     unchanged: count("unchanged"),
     conflicts: count("conflict"),
     skipped_not_completed: count("skipped_not_completed"),
+    blocked_has_schedule: count("blocked_has_schedule"),
     errors: count("error") + count("inconsistent"),
     results,
   };

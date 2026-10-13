@@ -60,6 +60,7 @@ export const TABLE_NAMES = {
 
 export const BLOB_CONTAINERS = {
   msalCache: "msal-token-caches",
+  deletedTasks: "deleted-tasks",
 } as const;
 
 /** Ensures all required tables/containers exist. Call once at startup. */

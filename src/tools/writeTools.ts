@@ -12,6 +12,8 @@ import {
   withChecklistConsistencyCheck,
 } from "../graph/verification.js";
 import { childLogger } from "../logging/logger.js";
+import { snapshotAndDeleteList, snapshotDeleter } from "../graph/safeDelete.js";
+import { DeletedTasksRepo } from "../storage/deletedTasksRepo.js";
 
 const isoDateTime = z.string().datetime({ offset: true }).or(z.string().date());
 const importance = z.enum(["low", "normal", "high"]);
@@ -169,14 +171,17 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
     "delete_task",
     {
       title: "Delete task",
-      description: "Permanently deletes a task. This cannot be undone.",
+      description:
+        "Deletes a task. Refuses open tasks that have a due date, reminder or recurrence — complete those first " +
+        "(and never fold them into another task's checklist, which can't hold dates). The deleted task is kept for " +
+        "30 days; the returned snapshot_id works with restore_deleted_task.",
       inputSchema: { list_id: z.string().min(1), task_id: z.string().min(1), ...connectionIdInputShape },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ list_id, task_id, connection_id }) =>
-      runGraphTool(ctx, "delete_task", connection_id, async (client) => {
-        await todo.deleteTask(client, list_id, task_id);
-        return { deleted: true, list_id, task_id };
+      runGraphTool(ctx, "delete_task", connection_id, async (client, connectionId) => {
+        const snapshotId = await snapshotDeleter(client, connectionId, new DeletedTasksRepo(), "delete_task")(list_id, task_id);
+        return { deleted: true, list_id, task_id, snapshot_id: snapshotId };
       })
   );
 
@@ -208,14 +213,17 @@ export function registerWriteTools(server: McpServer, ctx: ToolContext): void {
     "delete_task_list",
     {
       title: "Delete task list",
-      description: "Permanently deletes a task list and all tasks in it. This cannot be undone.",
+      description:
+        "Deletes a task list and all tasks in it. Refuses if the list holds open tasks with a due date, reminder " +
+        "or recurrence (it names them). Every task is kept for 30 days first; restore them one by one with " +
+        "restore_deleted_task and a target_list_id, since the original list is gone.",
       inputSchema: { list_id: z.string().min(1), ...connectionIdInputShape },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ list_id, connection_id }) =>
-      runGraphTool(ctx, "delete_task_list", connection_id, async (client) => {
-        await todo.deleteTaskList(client, list_id);
-        return { deleted: true, list_id };
+      runGraphTool(ctx, "delete_task_list", connection_id, async (client, connectionId) => {
+        const { snapshots } = await snapshotAndDeleteList(client, connectionId, new DeletedTasksRepo(), list_id);
+        return { deleted: true, list_id, tasks_kept_for_undo: snapshots };
       })
   );
 

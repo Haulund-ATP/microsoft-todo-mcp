@@ -55,6 +55,11 @@ connectors they control. The primary threats considered:
 **(3) Storage compromise:**
 - OAuth authorization codes and refresh tokens: hashed at rest (see
   above).
+- Undo snapshots of deleted tasks (blob container `deleted-tasks`, 30-day
+  retention) hold task titles, notes and checklists, so they are AES-256-GCM
+  encrypted with the same Key Vault data key as the MSAL caches, with AAD
+  `deleted-task:<connectionId>` so a snapshot can't be swapped into a token
+  cache or another connection.
 - MSAL token caches: AES-256-GCM encrypted before being written to Blob
   Storage, with the connection id bound in as AAD — a cache blob cannot be
   silently reattached to a different connection record. The

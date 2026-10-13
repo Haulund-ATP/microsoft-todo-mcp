@@ -32,7 +32,8 @@ beforeAll(async () => {
   const { createApp } = await import("../../src/http/app.js");
   server = createApp().listen(0);
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-});
+  // Importing the whole app is slow when the full suite runs in parallel.
+}, 60_000);
 
 afterAll(() => server?.close());
 

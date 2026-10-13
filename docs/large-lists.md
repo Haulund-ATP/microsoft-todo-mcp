@@ -85,9 +85,34 @@ arbitrary external systems.
 Completes, reopens or deletes up to 200 tasks in one list. Every item gives
 `task_id` and the `expected_title` from a fresh read; a different current
 title is skipped as `conflict`. `delete` skips tasks that aren't completed
-(`skipped_not_completed`) unless `only_completed: false`. Each write is
-confirmed by a fresh read (a deleted task must return 404; complete/reopen
-also check the checklist wasn't lost). Deletion cannot be undone.
+(`skipped_not_completed`) unless `only_completed: false`, and never deletes
+an open task with a schedule (see below). Each write is confirmed by a
+fresh read (a deleted task must return 404; complete/reopen also check the
+checklist wasn't lost). Each deleted task returns a `snapshot_id` for undo.
+
+### Deleting safely, and undo
+
+Every tool that deletes (`delete_task`, `bulk_task_action` with
+`action: "delete"`, `delete_task_list`) follows two rules
+(`src/graph/safeDelete.ts`):
+
+- **Open tasks with a schedule can't be deleted.** An open task with a due
+  date, an active reminder or a recurrence is refused, whatever
+  `only_completed` says (`blocked_has_schedule`; `delete_task_list`
+  refuses the whole list and names the tasks). Completing it first is a
+  separate, visible step. On 2026-10-13 ChatGPT "tidied" a list by deleting
+  open tasks and re-adding them as checklist items, which can't hold dates,
+  and a planned purchase date was lost.
+- **Every deletion is snapshotted first** — the task exactly as Graph
+  returned it plus its checklist, AES-GCM-encrypted with the Key Vault data
+  key and bound to the connection — and kept 30 days. If the snapshot can't
+  be saved, nothing is deleted. `list_deleted_tasks` shows them;
+  `restore_deleted_task` recreates one (new id) in its original list or a
+  `target_list_id`.
+
+Microsoft keeps no history Graph can read: tasks deleted in the To Do app
+itself only exist in Outlook's Deleted Items folder (Outlook on the web),
+not in these snapshots.
 
 Typical cleanup: `summarize_list` → `list_tasks` with
 `status: "completed"`, `completed_before: "2025-01-01"` → `bulk_task_action`

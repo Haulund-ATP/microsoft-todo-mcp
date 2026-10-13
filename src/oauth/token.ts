@@ -1,10 +1,11 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { loadEnv } from "../config/env.js";
 import { OAuthClientsRepo, OAuthCodesRepo, OAuthTokensRepo } from "../storage/oauthRepo.js";
 import { verifyPkceS256 } from "./pkce.js";
 import { signAccessToken } from "./jwt.js";
+import { rotateRefreshToken } from "./refreshRotation.js";
 import { audit } from "../logging/audit.js";
 import { childLogger } from "../logging/logger.js";
 
@@ -12,8 +13,12 @@ import { childLogger } from "../logging/logger.js";
  * Token endpoint: authorization_code grant (with mandatory PKCE
  * verification) and refresh_token grant (with rotation — every refresh
  * both issues a new refresh token AND invalidates the one just used;
- * reuse of an already-rotated refresh token revokes the entire descendant
- * chain, treating it as a replay/compromise signal).
+ * reuse of an already-rotated refresh token outside a short grace window
+ * revokes the entire descendant chain, treating it as a replay/compromise
+ * signal — see refreshRotation.ts).
+ *
+ * Every rejection is logged with an `rejectReason` so a client that
+ * suddenly asks the user to reconnect can be explained from the logs alone.
  */
 
 const tokenRequestSchema = z.discriminatedUnion("grant_type", [
@@ -37,9 +42,14 @@ export const tokenRouter = Router();
 
 tokenRouter.post("/oauth/token", async (req, res) => {
   const log = childLogger({ correlationId: req.correlationId, route: "/oauth/token" });
+  const reject = (r: Response, category: string, error: string, description?: string) => {
+    log.warn({ rejectReason: category }, "token request rejected");
+    r.status(400).json(description ? { error, error_description: description } : { error });
+  };
+
   const parsed = tokenRequestSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "invalid_request", error_description: parsed.error.message });
+    reject(res, "invalid_request", "invalid_request", parsed.error.message);
     return;
   }
   const body = parsed.data;
@@ -47,24 +57,26 @@ tokenRouter.post("/oauth/token", async (req, res) => {
   const clientsRepo = new OAuthClientsRepo();
   const client = await clientsRepo.get(body.client_id);
   if (!client) {
-    res.status(400).json({ error: "invalid_client" });
+    reject(res, "unknown_client", "invalid_client");
     return;
   }
 
   if (body.grant_type === "authorization_code") {
     const codesRepo = new OAuthCodesRepo();
-    const record = await codesRepo.consume(body.code);
-    if (!record) {
-      res.status(400).json({ error: "invalid_grant", error_description: "Unknown, expired, or already-used code." });
+    const consumed = await codesRepo.consume(body.code);
+    if ("reason" in consumed) {
+      const category =
+        consumed.reason === "consumed" ? "code_consumed" : consumed.reason === "expired" ? "code_expired" : "code_unknown";
+      reject(res, category, "invalid_grant", "Unknown, expired, or already-used code.");
       return;
     }
+    const { record } = consumed;
     if (record.clientId !== body.client_id || record.redirectUri !== body.redirect_uri) {
-      res.status(400).json({ error: "invalid_grant" });
+      reject(res, record.clientId !== body.client_id ? "code_client_mismatch" : "code_redirect_mismatch", "invalid_grant");
       return;
     }
     if (!verifyPkceS256(body.code_verifier, record.codeChallenge)) {
-      log.warn({ oauthErrorCategory: "pkce_mismatch" }, "PKCE verification failed");
-      res.status(400).json({ error: "invalid_grant", error_description: "PKCE verification failed." });
+      reject(res, "pkce_mismatch", "invalid_grant", "PKCE verification failed.");
       return;
     }
 
@@ -100,54 +112,51 @@ tokenRouter.post("/oauth/token", async (req, res) => {
   }
 
   // refresh_token grant
-  const tokensRepo = new OAuthTokensRepo();
-  const existing = await tokensRepo.get(body.refresh_token);
-  if (!existing || existing.clientId !== body.client_id) {
-    res.status(400).json({ error: "invalid_grant" });
+  const outcome = await rotateRefreshToken(new OAuthTokensRepo(), body.refresh_token, body.client_id, {
+    now: Date.now(),
+    graceSeconds: env.MCP_OAUTH_REFRESH_REUSE_GRACE_SECONDS,
+    ttlSeconds: env.MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+    newToken: () => randomBytes(32).toString("base64url"),
+  });
+  if (!outcome.ok) {
+    // Literal categories only, so nothing derived from the presented token reaches the log.
+    switch (outcome.category) {
+      case "reuse":
+        audit({ action: "oauth.refresh_reused", correlationId: req.correlationId, outcome: "denied" });
+        reject(res, "refresh_reuse", "invalid_grant", "Refresh token reuse detected; session revoked.");
+        break;
+      case "expired":
+        reject(res, "refresh_expired", "invalid_grant", "Refresh token expired or revoked.");
+        break;
+      case "revoked":
+        reject(res, "refresh_revoked", "invalid_grant", "Refresh token expired or revoked.");
+        break;
+      case "client_mismatch":
+        reject(res, "refresh_client_mismatch", "invalid_grant");
+        break;
+      default:
+        reject(res, "refresh_unknown", "invalid_grant");
+    }
     return;
   }
-  if (existing.revoked || new Date(existing.expiresAt).getTime() < Date.now()) {
-    res.status(400).json({ error: "invalid_grant", error_description: "Refresh token expired or revoked." });
-    return;
-  }
-  if (existing.used) {
-    // Replay of an already-rotated refresh token: treat as compromise,
-    // revoke the whole chain descending from it.
-    audit({ action: "oauth.refresh_reused", correlationId: req.correlationId, outcome: "denied" });
-    await tokensRepo.revoke(body.refresh_token);
-    await tokensRepo.revokeChainFrom(existing.tokenId);
-    res.status(400).json({ error: "invalid_grant", error_description: "Refresh token reuse detected; session revoked." });
-    return;
+  if (outcome.mode === "grace") {
+    audit({ action: "oauth.refresh_concurrent", correlationId: req.correlationId, outcome: "success" });
   }
 
-  await tokensRepo.markUsed(body.refresh_token);
+  const { record } = outcome;
   const accessToken = await signAccessToken({
-    subject: existing.subject,
-    clientId: existing.clientId,
-    scope: existing.scope,
-    resource: existing.resource,
-  });
-  const newRefreshToken = randomBytes(32).toString("base64url");
-  const env2 = loadEnv();
-  const now = Date.now();
-  await tokensRepo.store(newRefreshToken, {
-    clientId: existing.clientId,
-    subject: existing.subject,
-    resource: existing.resource,
-    scope: existing.scope,
-    createdAt: new Date(now).toISOString(),
-    expiresAt: new Date(now + env2.MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS * 1000).toISOString(),
-    revoked: false,
-    used: false,
-    rotatedFrom: existing.tokenId,
+    subject: record.subject,
+    clientId: record.clientId,
+    scope: record.scope,
+    resource: record.resource,
   });
 
   audit({ action: "oauth.token_issued", correlationId: req.correlationId, outcome: "success", detail: "refresh_rotation" });
   res.json({
     access_token: accessToken,
     token_type: "Bearer",
-    expires_in: env2.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
-    refresh_token: newRefreshToken,
-    scope: existing.scope,
+    expires_in: env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+    refresh_token: outcome.refreshToken,
+    scope: record.scope,
   });
 });

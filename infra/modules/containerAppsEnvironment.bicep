@@ -4,17 +4,17 @@ param name string
 @description('Azure region.')
 param location string
 
-@description('Log Analytics workspace id, or empty string to skip Container Apps -> Log Analytics wiring.')
-param logAnalyticsWorkspaceId string = ''
+@description('Name of an existing Log Analytics workspace in this resource group, or empty string to skip Container Apps -> Log Analytics wiring.')
+param logAnalyticsWorkspaceName string = ''
 
-@description('Log Analytics customer id (workspace GUID), required when logAnalyticsWorkspaceId is set.')
-param logAnalyticsCustomerId string = ''
+var useLogAnalytics = !empty(logAnalyticsWorkspaceName)
 
-@secure()
-@description('Log Analytics shared key, required when logAnalyticsWorkspaceId is set.')
-param logAnalyticsSharedKey string = ''
-
-var useLogAnalytics = !empty(logAnalyticsWorkspaceId)
+// The shared key is read here with listKeys() at deploy time rather than
+// passed in as a parameter, so it never flows through parameter files or
+// deployment history in plaintext.
+resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = if (useLogAnalytics) {
+  name: useLogAnalytics ? logAnalyticsWorkspaceName : 'unused'
+}
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: name
@@ -24,8 +24,8 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
       ? {
           destination: 'log-analytics'
           logAnalyticsConfiguration: {
-            customerId: logAnalyticsCustomerId
-            sharedKey: logAnalyticsSharedKey
+            customerId: workspace.properties.customerId
+            sharedKey: workspace.listKeys().primarySharedKey
           }
         }
       : null

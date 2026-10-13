@@ -4,10 +4,12 @@ import { registerAccountTools } from "./accounts.js";
 import { registerReadTools } from "./readTools.js";
 import { registerWriteTools } from "./writeTools.js";
 import { registerBulkRenameTools } from "./bulkRenameTools.js";
+import { registerBulkTools } from "./bulkTools.js";
 
 export function registerAllTools(server: McpServer, ctx: ToolContext): void {
   registerAccountTools(server, ctx);
   registerReadTools(server, ctx);
   registerWriteTools(server, ctx);
   registerBulkRenameTools(server, ctx);
+  registerBulkTools(server, ctx);
 }

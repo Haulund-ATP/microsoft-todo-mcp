@@ -39,8 +39,8 @@ param budgetNotificationEmail string
 @description('Monthly budget amount in the subscription\'s billing currency.')
 param budgetAmount int = 25
 
-@description('Deploy an (optional) Log Analytics workspace and wire it to the Container Apps environment.')
-param enableLogAnalytics bool = false
+@description('Deploy a Log Analytics workspace and wire it to the Container Apps environment. Without it, logs exist only in the live console stream and are lost on every scale-to-zero restart.')
+param enableLogAnalytics bool = true
 
 @description('Owner identity claim name used to gate the /accounts admin page, e.g. "oid".')
 param adminOwnerClaimName string = 'oid'
@@ -94,13 +94,9 @@ module environment 'modules/containerAppsEnvironment.bicep' = {
   params: {
     name: environmentName
     location: location
-    logAnalyticsWorkspaceId: enableLogAnalytics ? logAnalytics.outputs.id : ''
-    logAnalyticsCustomerId: enableLogAnalytics ? logAnalytics.outputs.customerId : ''
-    // Shared key is intentionally NOT wired here to avoid plaintext key flow
-    // through parameters; see docs/operations.md for the documented manual
-    // step (or extend with a listKeys() reference at deploy time) if you
-    // enable Log Analytics.
-    logAnalyticsSharedKey: ''
+    // The module reads the shared key itself via listKeys(), so no key flows
+    // through parameters.
+    logAnalyticsWorkspaceName: enableLogAnalytics ? logAnalytics.outputs.name : ''
   }
 }
 

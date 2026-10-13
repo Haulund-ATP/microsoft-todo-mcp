@@ -50,13 +50,29 @@ server implements that authorization server role in `src/oauth/`:
   matching it against what it sent (standard OAuth behavior — we don't try
   to second-guess the client's own CSRF protection for its half of the flow).
 - **One-time authorization codes** — `src/storage/oauthRepo.ts`
-  (`OAuthCodesRepo.consume`) marks a code `consumed` on first use; a second
-  attempt (replay) is rejected as `invalid_grant`, not treated as "unknown."
+  (`OAuthCodesRepo.consume`) marks a code `consumed` on first use, with an
+  etag-conditional write so two concurrent exchanges can't both succeed; a
+  second attempt (replay) is rejected as `invalid_grant`, not treated as
+  "unknown."
 - **Refresh token rotation + replay detection** — every refresh both issues
-  a new refresh token and invalidates the old one. If an already-used
-  refresh token is presented again, the whole rotation chain descending
-  from it is revoked (`OAuthTokensRepo.revokeChainFrom`), on the assumption
-  that reuse means the token leaked.
+  a new refresh token and invalidates the old one (`src/oauth/refreshRotation.ts`).
+  Marking the old token used is etag-conditional, so exactly one concurrent
+  request wins it. If an already-used refresh token is presented again
+  **more than `MCP_OAUTH_REFRESH_REUSE_GRACE_SECONDS` (default 60) after its
+  first use**, the whole rotation chain descending from it is revoked
+  (`OAuthTokensRepo.revokeChainFrom`), on the assumption that reuse means
+  the token leaked.
+- **Reuse grace window** — inside that window a repeat is rotated again
+  instead (audit action `oauth.refresh_concurrent`). ChatGPT refreshes once
+  per tool call and runs tool calls in parallel, so the same token is
+  routinely redeemed twice within a second. Without the window, that benign
+  race revoked the connection and forced the user to reconnect (observed
+  2026-10-13). This is the same trade-off as Auth0's and Okta's refresh
+  token "reuse interval": a token stolen and replayed within 60 s of its
+  legitimate use isn't detected, in exchange for not logging the owner out
+  on ordinary parallel use. The grace-issued token links to the same
+  parent, so an out-of-window replay still revokes every descendant. Set
+  the variable to `0` to disable the window.
 - **Short-lived access tokens** (`MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS`,
   default 600s) so a leaked access token has a small blast radius.
 

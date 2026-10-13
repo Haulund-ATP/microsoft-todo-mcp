@@ -2,10 +2,41 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "./context.js";
 import { connectionIdInputShape } from "./accounts.js";
-import { runGraphTool } from "./helpers.js";
+import { runGraphTool, type ToolTextResult } from "./helpers.js";
 import * as todo from "../graph/todoApi.js";
+import { filterTasks, sortTasks, summarizeTasks } from "../graph/taskQuery.js";
+import { searchTasksMulti } from "../graph/search.js";
 
 const isoDateTime = z.string().datetime({ offset: true }).or(z.string().date());
+
+/** Whole-list read cap for filtering/sorting/summarizing; far above any list seen (~600). */
+const SCAN_CAP = 5000;
+
+const STATUS_FILTERS = {
+  all: undefined,
+  open: "status ne 'completed'",
+  completed: "status eq 'completed'",
+} as const;
+
+export const listTasksInputShape = {
+  list_id: z.string().min(1),
+  max_items: z.number().int().positive().max(500).default(50),
+  status: z.enum(["all", "open", "completed"]).default("all"),
+  created_after: isoDateTime.optional().describe("Only tasks created at or after this date/time."),
+  created_before: isoDateTime.optional().describe("Only tasks created before this date/time."),
+  completed_before: isoDateTime.optional().describe("Only completed tasks finished before this date/time (e.g. to find old completed tasks)."),
+  sort: z.enum(["none", "created_asc", "created_desc", "title", "due"]).default("none"),
+  ...connectionIdInputShape,
+};
+
+export const searchTasksInputShape = {
+  list_id: z.string().min(1).optional().describe("Search only this list. Omit to search every list."),
+  query: z.string().min(1).max(200).optional(),
+  queries: z.array(z.string().min(1).max(200)).max(50).optional().describe("Several title fragments to look up in one call."),
+  include_completed: z.boolean().default(true),
+  max_items: z.number().int().positive().max(200).default(50).describe("Maximum matches returned per query."),
+  ...connectionIdInputShape,
+};
 
 export function registerReadTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
@@ -36,16 +67,64 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
     "list_tasks",
     {
       title: "List tasks",
-      description: "Lists tasks within a task list, optionally capped at max_items (default 50, max 500).",
-      inputSchema: {
-        list_id: z.string().min(1),
-        max_items: z.number().int().positive().max(500).default(50),
-        ...connectionIdInputShape,
-      },
+      description:
+        "Lists tasks within a task list as compact rows (id, title, status, importance, created/due/completed " +
+        "dates, recurring) — no notes; use get_task for a task's notes. Filter by status and by creation/completion " +
+        "date, and sort. Returns `matched` (how many tasks pass the filters, even beyond max_items) so counts don't " +
+        "need a second call. For counts, duplicates and age breakdowns of a whole list, prefer summarize_list.",
+      inputSchema: listTasksInputShape,
       annotations: { readOnlyHint: true, destructiveHint: false },
     },
-    async ({ list_id, max_items, connection_id }) =>
-      runGraphTool(ctx, "list_tasks", connection_id, (client) => todo.listTasks(client, list_id, { maxItems: max_items }))
+    async ({ list_id, max_items, status, created_after, created_before, completed_before, sort, connection_id }) =>
+      runGraphTool(ctx, "list_tasks", connection_id, async (client) => {
+        const clientSide = Boolean(created_after || created_before || completed_before) || sort !== "none";
+        const { tasks, truncated } = await todo.listTasksWithMeta(client, list_id, {
+          compact: true,
+          filter: STATUS_FILTERS[status],
+          // Client-side filters/sorts need the whole list to be correct.
+          maxItems: clientSide ? SCAN_CAP : max_items,
+        });
+        const matched = sortTasks(
+          filterTasks(tasks.map(todo.toCompactTask), {
+            createdAfter: created_after,
+            createdBefore: created_before,
+            completedBefore: completed_before,
+          }),
+          sort
+        );
+        return {
+          tasks: matched.slice(0, max_items),
+          returned: Math.min(matched.length, max_items),
+          matched: clientSide ? matched.length : undefined,
+          more_available: matched.length > max_items || truncated,
+        };
+      })
+  );
+
+  server.registerTool(
+    "summarize_list",
+    {
+      title: "Summarize task list",
+      description:
+        "Overview of a whole task list in one call, computed server-side: totals by status and importance, open, " +
+        "completed, overdue and recurring counts, tasks created and completed per month, the oldest open tasks, " +
+        "and groups of likely duplicates (titles equal ignoring case, accents and punctuation). Use this instead of " +
+        "paging through list_tasks to count, age or de-duplicate a list.",
+      inputSchema: { list_id: z.string().min(1), ...connectionIdInputShape },
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    },
+    async ({ list_id, connection_id }) =>
+      runGraphTool(ctx, "summarize_list", connection_id, async (client) => {
+        const [list, { tasks, truncated }] = await Promise.all([
+          todo.getTaskList(client, list_id),
+          todo.listTasksWithMeta(client, list_id, { compact: true, maxItems: SCAN_CAP }),
+        ]);
+        return {
+          list: { id: list.id, displayName: list.displayName, isShared: list.isShared },
+          truncated: truncated || undefined,
+          ...summarizeTasks(tasks.map(todo.toCompactTask)),
+        };
+      })
   );
 
   server.registerTool(
@@ -105,17 +184,20 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
     "search_tasks",
     {
       title: "Search tasks",
-      description: "Searches for tasks whose title contains the given text, within a specific task list.",
-      inputSchema: {
-        list_id: z.string().min(1),
-        query: z.string().min(1).max(200),
-        max_items: z.number().int().positive().max(200).default(50),
-        ...connectionIdInputShape,
-      },
+      description:
+        "Finds tasks whose title contains a text, ignoring case and accents. Pass several texts in `queries` to " +
+        "look them all up in one call (preferred over calling this repeatedly), and omit list_id to search every " +
+        "list. Returns compact rows grouped per query, each with its list.",
+      inputSchema: searchTasksInputShape,
       annotations: { readOnlyHint: true, destructiveHint: false },
     },
-    async ({ list_id, query, max_items, connection_id }) =>
-      runGraphTool(ctx, "search_tasks", connection_id, (client) => todo.searchTasks(client, list_id, query, max_items))
+    async ({ list_id, query, queries, include_completed, max_items, connection_id }) => {
+      const all = [...new Set([...(query ? [query] : []), ...(queries ?? [])])];
+      if (all.length === 0) return validationError("Provide `query` or a non-empty `queries` array.");
+      return runGraphTool(ctx, "search_tasks", connection_id, (client) =>
+        searchTasksMulti(client, all, { listId: list_id, includeCompleted: include_completed, maxPerQuery: max_items })
+      );
+    }
   );
 
   server.registerTool(
@@ -133,10 +215,12 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
     async ({ list_id, max_items, connection_id }) =>
       runGraphTool(ctx, "list_overdue_tasks", connection_id, async (client) => {
         const nowIso = new Date().toISOString().replace("Z", "");
-        return todo.listTasks(client, list_id, {
+        const tasks = await todo.listTasks(client, list_id, {
           filter: `status ne 'completed' and dueDateTime/dateTime le '${nowIso}'`,
           maxItems: max_items,
+          compact: true,
         });
+        return tasks.map(todo.toCompactTask);
       })
   );
 
@@ -158,10 +242,12 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
       runGraphTool(ctx, "list_tasks_due_between", connection_id, async (client) => {
         const fromRaw = new Date(from).toISOString().replace("Z", "");
         const toRaw = new Date(to).toISOString().replace("Z", "");
-        return todo.listTasks(client, list_id, {
+        const tasks = await todo.listTasks(client, list_id, {
           filter: `dueDateTime/dateTime ge '${fromRaw}' and dueDateTime/dateTime le '${toRaw}'`,
           maxItems: max_items,
+          compact: true,
         });
+        return tasks.map(todo.toCompactTask);
       })
   );
 
@@ -178,8 +264,13 @@ export function registerReadTools(server: McpServer, ctx: ToolContext): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
     },
     async ({ list_id, max_items, connection_id }) =>
-      runGraphTool(ctx, "list_completed_tasks", connection_id, (client) =>
-        todo.listTasks(client, list_id, { filter: `status eq 'completed'`, maxItems: max_items })
-      )
+      runGraphTool(ctx, "list_completed_tasks", connection_id, async (client) => {
+        const tasks = await todo.listTasks(client, list_id, { filter: `status eq 'completed'`, maxItems: max_items, compact: true });
+        return tasks.map(todo.toCompactTask);
+      })
   );
+}
+
+function validationError(message: string): ToolTextResult {
+  return { isError: true, content: [{ type: "text", text: JSON.stringify({ errorType: "validation_error", message }, null, 2) }] };
 }

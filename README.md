@@ -47,7 +47,9 @@ own OAuth authorization server, your own encrypted token storage).
   grouping in the To Do app — see [`docs/bulk-rename.md`](docs/bulk-rename.md).
 - **MCP tools**: full read/write coverage of task lists, tasks, and
   checklist items, plus account/profile discovery tools — see the tool
-  list in [`src/tools/`](src/tools/).
+  list in [`src/tools/`](src/tools/). Large lists get a one-call summary,
+  multi-query search, cross-profile copy/move and verified bulk
+  complete/delete — see [`docs/large-lists.md`](docs/large-lists.md).
 - **Multi-account routing** that never guesses which Microsoft account a
   tool call should hit — see [`docs/multi-account.md`](docs/multi-account.md).
 - **Two independent OAuth systems**, documented in

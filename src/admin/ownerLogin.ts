@@ -66,7 +66,7 @@ ownerLoginRouter.get("/oauth/owner/callback", async (req, res, next) => {
   try {
     const { code, state, error, error_description: errorDescription } = req.query;
     if (error) {
-      log.warn({ oauthErrorCategory: String(error) }, "owner login returned error");
+      log.warn({ rejectReason: String(error) }, "owner login returned error");
       res.status(400).send(`Sign-in failed: ${String(errorDescription ?? error)}`);
       return;
     }

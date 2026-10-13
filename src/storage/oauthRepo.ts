@@ -71,26 +71,44 @@ export class OAuthCodesRepo {
     });
   }
 
-  async consume(plainCode: string): Promise<OAuthAuthorizationCode | undefined> {
+  async consume(
+    plainCode: string
+  ): Promise<{ record: OAuthAuthorizationCode } | { reason: "unknown" | "consumed" | "expired" }> {
     const rowKey = hashSecret(plainCode);
     let entity;
     try {
       entity = await this.table().getEntity(CODE_PARTITION, rowKey);
     } catch (err) {
-      if ((err as { statusCode?: number }).statusCode === 404) return undefined;
+      if ((err as { statusCode?: number }).statusCode === 404) return { reason: "unknown" };
       throw err;
     }
     const record = stripMeta(entity) as unknown as OAuthAuthorizationCode;
-    if (record.consumed) return undefined; // replay attempt
-    if (new Date(record.expiresAt).getTime() < Date.now()) return undefined;
+    if (record.consumed) return { reason: "consumed" }; // replay attempt
+    if (new Date(record.expiresAt).getTime() < Date.now()) return { reason: "expired" };
 
     // Mark consumed (one-time use) rather than deleting immediately, so a
     // rapid replay is detected as "already consumed" rather than "unknown".
-    await this.table().updateEntity(
-      { partitionKey: CODE_PARTITION, rowKey, consumed: true },
-      "Merge"
-    );
-    return { ...record, code: plainCode };
+    // Conditional on the etag we read, so two concurrent exchanges of the
+    // same code can't both pass the check above.
+    if (!(await conditionalMerge(this.table(), { partitionKey: CODE_PARTITION, rowKey, consumed: true }, entity.etag))) {
+      return { reason: "consumed" };
+    }
+    return { record: { ...record, code: plainCode } };
+  }
+}
+
+/** Merge-updates an entity only if it still has `etag`; false if someone else changed it first. */
+async function conditionalMerge(
+  table: ReturnType<typeof getTableClient>,
+  entity: { partitionKey: string; rowKey: string; [key: string]: unknown },
+  etag: string | undefined
+): Promise<boolean> {
+  try {
+    await table.updateEntity(entity, "Merge", { etag: etag ?? "*" });
+    return true;
+  } catch (err) {
+    if ((err as { statusCode?: number }).statusCode === 412) return false;
+    throw err;
   }
 }
 
@@ -107,10 +125,10 @@ export class OAuthTokensRepo {
     });
   }
 
-  async get(plainToken: string): Promise<OAuthRefreshToken | undefined> {
+  async get(plainToken: string): Promise<(OAuthRefreshToken & { etag?: string }) | undefined> {
     try {
       const entity = await this.table().getEntity(TOKEN_PARTITION, hashSecret(plainToken));
-      return { ...(stripMeta(entity) as unknown as OAuthRefreshToken), tokenId: hashSecret(plainToken) };
+      return { ...(stripMeta(entity) as unknown as OAuthRefreshToken), tokenId: hashSecret(plainToken), etag: entity.etag };
     } catch (err) {
       if ((err as { statusCode?: number }).statusCode === 404) return undefined;
       throw err;
@@ -126,11 +144,15 @@ export class OAuthTokensRepo {
       });
   }
 
-  async markUsed(plainToken: string): Promise<void> {
-    const rowKey = hashSecret(plainToken);
-    await this.table().updateEntity(
-      { partitionKey: TOKEN_PARTITION, rowKey, used: true },
-      "Merge"
+  /**
+   * Marks the token used, but only if it is unchanged since it was read
+   * (`etag`). Returns false when a concurrent request redeemed it first.
+   */
+  async claim(plainToken: string, etag: string | undefined, usedAt: string): Promise<boolean> {
+    return conditionalMerge(
+      this.table(),
+      { partitionKey: TOKEN_PARTITION, rowKey: hashSecret(plainToken), used: true, usedAt },
+      etag
     );
   }
 

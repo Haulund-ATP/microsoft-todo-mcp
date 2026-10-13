@@ -38,12 +38,16 @@ To find it before the first deploy:
 | `msal-cache-encryption-key` | **Do not rotate casually** — rotating without re-encrypting existing cache blobs makes them undecryptable, forcing re-authentication of every connection. If rotating, plan a maintenance window and re-run the Microsoft sign-in for each connection afterward. | High if done carelessly. |
 | `graph-client-secret` | Rotate on the Entra app registration first, then update the Key Vault secret, then restart. | Medium — Graph calls fail with 401 until updated. |
 
-## Reading audit logs
+## Reading logs
 
-Audit events (`src/logging/audit.ts`) are emitted as structured `pino`
-log lines with `"audit": true` and an `action` field (see the
-`AuditAction` union for the full list). In Azure, if `enableLogAnalytics`
-is turned on, query with:
+Logs go to the Log Analytics workspace (`enableLogAnalytics`, on by
+default). Without it they exist only in the live console stream, which is
+lost every time the replica scales to zero — an incident that is noticed a
+few minutes late can't be investigated (2026-10-13). For live tailing,
+`az containerapp logs show --follow` still works.
+
+Audit events (`src/logging/audit.ts`) are structured `pino` lines with
+`"audit": true` and an `action` field (see the `AuditAction` union):
 
 ```kusto
 ContainerAppConsoleLogs_CL
@@ -52,8 +56,38 @@ ContainerAppConsoleLogs_CL
 | order by TimeGenerated desc
 ```
 
-Without Log Analytics, use `az containerapp logs show --follow` for
-live tailing, or `az containerapp logs show` for a recent window.
+### "ChatGPT asks me to reconnect" — why was a token rejected?
+
+Every rejected OAuth/MCP request is logged at `warn` with an
+`rejectReason`:
+
+| Category | Meaning |
+|---|---|
+| `refresh_reuse` | A used refresh token was replayed after the grace window; the session was revoked. Expect a reconnect. |
+| `refresh_expired` / `refresh_revoked` / `refresh_unknown` / `refresh_client_mismatch` | The client's refresh token is no longer usable. |
+| `code_unknown` / `code_consumed` / `code_expired` / `code_client_mismatch` / `code_redirect_mismatch` / `pkce_mismatch` | The authorization-code exchange after "Giv adgang" failed. |
+| `bearer_expired` / `bearer_audience_mismatch` / `bearer_issuer_mismatch` / `bearer_bad_signature` / `bearer_malformed` | `/mcp` rejected the access token. |
+| `authorize_*` / `approve_*` | The consent page request itself was invalid. |
+
+`oauth.refresh_concurrent` audit lines are parallel refreshes absorbed by
+the grace window — normal for ChatGPT, not a problem.
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where Log_s has "rejectReason" or Log_s has "oauth.refresh"
+| project TimeGenerated, Log_s
+| order by TimeGenerated desc
+```
+
+Request lines carry method, redacted URL, user agent, client IP and
+status only; `/health` and `/ready` probes are not logged.
+
+## Expired OAuth rows
+
+Authorization codes, refresh tokens and pending sign-ins expired for more
+than a day are deleted at startup and then daily
+(`src/storage/cleanup.ts`); the count is logged as `expired oauth rows
+cleaned up`.
 
 ## Diagnosing a stuck/erroring connection
 
@@ -134,12 +168,6 @@ read-only comparison, not a prerequisite for the tool to work:
   `docs/oauth.md` "pre-registered" path) is not built — currently requires
   directly inserting a row into the `oauthclients` Table via `az storage
   entity insert` or the Storage Explorer if you need this fallback.
-- **Log Analytics shared key wiring** in
-  `infra/modules/containerAppsEnvironment.bicep` is left as an empty
-  string by default (see the comment in `infra/main.bicep`) to avoid
-  passing a plaintext key through Bicep parameters; if you enable
-  `enableLogAnalytics`, wire the shared key via a `listKeys()` reference
-  or a follow-up `az containerapp env update` call.
 - **CIMD (Client ID Metadata Documents) support** is not implemented — see
   `docs/oauth.md` for why DCR was chosen instead, and what a future CIMD
   add-on would touch.

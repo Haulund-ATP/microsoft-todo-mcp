@@ -38,6 +38,9 @@ const envSchema = z.object({
   MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(600),
   MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(2592000),
   MCP_OAUTH_AUTH_CODE_TTL_SECONDS: z.coerce.number().int().positive().default(120),
+  // How long after its first use a refresh token may be redeemed again
+  // (parallel refreshes) before it counts as a replay — see oauth/refreshRotation.ts.
+  MCP_OAUTH_REFRESH_REUSE_GRACE_SECONDS: z.coerce.number().int().nonnegative().default(60),
 
   ADMIN_OWNER_CLAIM_NAME: z.string().min(1).default("oid"),
   ADMIN_OWNER_CLAIM_VALUE: z.string().min(1),

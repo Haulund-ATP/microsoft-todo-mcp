@@ -1,12 +1,14 @@
 import { loadEnv } from "./config/env.js";
 import { logger } from "./logging/logger.js";
 import { ensureStorageProvisioned } from "./storage/clients.js";
+import { scheduleOAuthCleanup } from "./storage/cleanup.js";
 import { createApp } from "./http/app.js";
 
 async function main(): Promise<void> {
   const env = loadEnv();
 
   await ensureStorageProvisioned();
+  scheduleOAuthCleanup();
 
   const app = createApp();
   const server = app.listen(env.PORT, () => {

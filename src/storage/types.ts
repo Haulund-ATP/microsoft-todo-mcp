@@ -84,4 +84,6 @@ export interface OAuthRefreshToken {
   /** Rotation chain: previous token id, for replay detection. */
   rotatedFrom?: string;
   used: boolean;
+  /** When the token was first redeemed; drives the concurrent-refresh grace window. */
+  usedAt?: string;
 }

@@ -4,6 +4,7 @@ import cookieParser from "cookie-parser";
 import { pinoHttp } from "pino-http";
 import { logger } from "../logging/logger.js";
 import { correlationIdMiddleware } from "../logging/correlation.js";
+import { httpLogSerializers, isProbeRequest } from "../logging/httpLog.js";
 import { healthRouter } from "./health.js";
 import { wellKnownRouter } from "../oauth/wellKnown.js";
 import { registerRouter } from "../oauth/register.js";
@@ -27,7 +28,8 @@ export function createApp() {
       logger,
       genReqId: (req: Request) => req.correlationId,
       customProps: (req: Request) => ({ route: req.path }),
-      redact: ["req.headers.authorization", "req.headers.cookie"],
+      autoLogging: { ignore: isProbeRequest },
+      serializers: httpLogSerializers,
     })
   );
 

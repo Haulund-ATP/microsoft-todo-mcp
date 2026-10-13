@@ -19,7 +19,8 @@ export type AuditAction =
   | "oauth.client_registered"
   | "oauth.token_issued"
   | "oauth.token_revoked"
-  | "oauth.refresh_reused"; // replay-detection signal
+  | "oauth.refresh_reused" // replay-detection signal
+  | "oauth.refresh_concurrent"; // reuse inside the grace window, rotated instead of revoked
 
 export interface AuditEvent {
   action: AuditAction;

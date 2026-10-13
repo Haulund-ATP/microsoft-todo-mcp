@@ -32,7 +32,9 @@ varies by ChatGPT plan/version), then:
 4. You'll be redirected to `/oauth/authorize`; if you're not already logged
    in as the deployment owner, you'll be bounced through
    `/oauth/owner/login` (a Microsoft sign-in) first, then shown a one-click
-   "Allow" screen.
+   "Giv adgang" (grant access) screen listing the profiles the grant covers.
+   After tapping it, an "Adgang givet" page sends you back to ChatGPT; if
+   it doesn't, tap "Fortsæt".
 5. After authorizing, ChatGPT holds an access token + refresh token scoped
    to that specific `/mcp/...` resource.
 

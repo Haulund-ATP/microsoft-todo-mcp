@@ -1,5 +1,7 @@
 import type { Client } from "@microsoft/microsoft-graph-client";
-import { fetchAllPages, withThrottleRetry } from "./pagination.js";
+import { fetchAllPages, fetchAllPagesWithMeta, withThrottleRetry } from "./pagination.js";
+import { toGraphErrorInfo } from "./client.js";
+import { logger } from "../logging/logger.js";
 import { toGraphDateTimeTimeZone, fromGraphDateTimeTimeZone, type DisplayableDateTime } from "./time.js";
 
 /**
@@ -39,6 +41,40 @@ export interface TaskItem {
    * not been verified and must not be assumed.
    */
   etag?: string;
+  /** True when the task has a recurrence pattern. */
+  recurring?: boolean;
+  categories?: string[];
+}
+
+/**
+ * Small per-task view for listing, searching and summarizing many tasks:
+ * no notes body, dates flattened to their stored value. Keeps a 500-task
+ * response well inside a chat model's context; get_task returns the rest.
+ */
+export interface CompactTask {
+  id: string;
+  title: string;
+  status: TaskItem["status"];
+  importance: TaskItem["importance"];
+  created?: string;
+  lastModified?: string;
+  due?: string;
+  completed?: string;
+  recurring?: boolean;
+}
+
+export function toCompactTask(task: TaskItem): CompactTask {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    importance: task.importance,
+    created: task.createdDateTime,
+    lastModified: task.lastModifiedDateTime,
+    due: task.dueDateTime?.iso,
+    completed: task.completedDateTime?.iso,
+    recurring: task.recurring || undefined,
+  };
 }
 
 export interface ChecklistItem {
@@ -102,6 +138,8 @@ function mapTask(raw: Record<string, unknown>): TaskItem {
     createdDateTime: raw.createdDateTime as string | undefined,
     lastModifiedDateTime: raw.lastModifiedDateTime as string | undefined,
     etag: raw["@odata.etag"] as string | undefined,
+    recurring: raw.recurrence ? true : undefined,
+    categories: Array.isArray(raw.categories) && raw.categories.length ? (raw.categories as string[]) : undefined,
   };
 }
 
@@ -141,15 +179,70 @@ export async function deleteTaskList(client: Client, listId: string): Promise<vo
 
 export interface ListTasksOptions {
   filter?: string;
-  top?: number;
   maxItems?: number;
+  /** Fetch only the fields CompactTask needs (no notes body). */
+  compact?: boolean;
+}
+
+/** Fields behind CompactTask, requested with $select when `compact` is set. */
+const COMPACT_TASK_FIELDS = [
+  "id",
+  "title",
+  "status",
+  "importance",
+  "createdDateTime",
+  "lastModifiedDateTime",
+  "dueDateTime",
+  "completedDateTime",
+  "recurrence",
+];
+
+/**
+ * Listing ~500 tasks took 4.5–8.5 s at 50 per page (10 sequential Graph
+ * round trips). Larger pages and $select cut that, but Graph's To Do docs
+ * don't state the page-size ceiling or $select support for tasks, so the
+ * first 400 Bad Request switches this process back to the old shape for
+ * good rather than failing the call.
+ */
+let optimizedTaskPaging = true;
+
+export function _resetTaskPagingForTests(): void {
+  optimizedTaskPaging = true;
+}
+
+export async function listTasksWithMeta(
+  client: Client,
+  listId: string,
+  options: ListTasksOptions = {}
+): Promise<{ tasks: TaskItem[]; truncated: boolean }> {
+  const build = (optimized: boolean) => {
+    let request = client.api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`).top(optimized ? 100 : 50);
+    if (optimized && options.compact) request = request.select(COMPACT_TASK_FIELDS.join(","));
+    if (options.filter) request = request.filter(options.filter);
+    return request;
+  };
+  const run = async (optimized: boolean) => {
+    const { items, truncated } = await fetchAllPagesWithMeta<Record<string, unknown>>(client, build(optimized), {
+      maxItems: options.maxItems,
+    });
+    return { tasks: items.map(mapTask), truncated };
+  };
+  if (!optimizedTaskPaging) return run(false);
+  try {
+    return await run(true);
+  } catch (err) {
+    if (toGraphErrorInfo(err).statusCode !== 400) throw err;
+    // Only blame the paging shape if the old shape then succeeds; a 400
+    // caused by the filter itself fails both ways and is rethrown.
+    const result = await run(false);
+    optimizedTaskPaging = false;
+    logger.warn({ graphStatusCode: 400 }, "Graph rejected $top=100/$select on tasks; falling back to 50 per page");
+    return result;
+  }
 }
 
 export async function listTasks(client: Client, listId: string, options: ListTasksOptions = {}): Promise<TaskItem[]> {
-  let request = client.api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`).top(options.top ?? 50);
-  if (options.filter) request = request.filter(options.filter);
-  const raw = await fetchAllPages<Record<string, unknown>>(client, request, { maxItems: options.maxItems });
-  return raw.map(mapTask);
+  return (await listTasksWithMeta(client, listId, options)).tasks;
 }
 
 export async function getTask(client: Client, listId: string, taskId: string): Promise<TaskItem> {
@@ -157,13 +250,6 @@ export async function getTask(client: Client, listId: string, taskId: string): P
     client.api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`).get()
   );
   return mapTask(raw);
-}
-
-export async function searchTasks(client: Client, listId: string, query: string, maxItems = 50): Promise<TaskItem[]> {
-  // Graph To Do tasks do not support full-text $search; approximate with a
-  // contains() filter on title, which is the documented workaround.
-  const escaped = query.replace(/'/g, "''");
-  return listTasks(client, listId, { filter: `contains(title,'${escaped}')`, maxItems });
 }
 
 export interface CreateTaskInput {
@@ -244,13 +330,34 @@ export async function listChecklistItems(client: Client, listId: string, taskId:
   return raw.map(mapChecklistItem);
 }
 
-export async function addChecklistItem(client: Client, listId: string, taskId: string, displayName: string): Promise<ChecklistItem> {
+export async function addChecklistItem(
+  client: Client,
+  listId: string,
+  taskId: string,
+  displayName: string,
+  isChecked?: boolean
+): Promise<ChecklistItem> {
   const raw = await withThrottleRetry(() =>
     client
       .api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}/checklistItems`)
-      .post({ displayName })
+      .post(isChecked === undefined ? { displayName } : { displayName, isChecked })
   );
   return mapChecklistItem(raw);
+}
+
+/** The task exactly as Graph returns it, for copying fields this module doesn't model. */
+export async function getTaskRaw(client: Client, listId: string, taskId: string): Promise<Record<string, unknown>> {
+  return withThrottleRetry(() =>
+    client.api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`).get()
+  );
+}
+
+/** Creates a task from an already Graph-shaped payload (used when copying a task verbatim). */
+export async function createTaskRaw(client: Client, listId: string, payload: Record<string, unknown>): Promise<TaskItem> {
+  const raw = await withThrottleRetry(() =>
+    client.api(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`).post(payload)
+  );
+  return mapTask(raw);
 }
 
 export async function updateChecklistItem(

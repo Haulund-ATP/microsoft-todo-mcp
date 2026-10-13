@@ -37,7 +37,9 @@ connectors they control. The primary threats considered:
   access token has a small window.
 - Refresh tokens rotate on every use; reuse of an already-rotated token
   revokes the entire descendant chain (`OAuthTokensRepo.revokeChainFrom`),
-  treating replay as a compromise signal.
+  treating replay as a compromise signal — except within a 60 s grace
+  window after first use, which tolerates ChatGPT's parallel refreshes (see
+  "Reuse grace window" in `docs/oauth.md` for the trade-off).
 - Refresh tokens are stored **hashed** (SHA-256) in Table Storage, so a
   storage-level leak does not itself yield usable bearer tokens.
 - `/oauth/revoke` lets the owner invalidate a specific refresh token
@@ -62,6 +64,14 @@ connectors they control. The primary threats considered:
 - See `docs/multi-account.md` — bound profiles reject a mismatched
   `connection_id` outright rather than silently using the one from the
   route or the one from the argument.
+- One deliberate exception: `copy_tasks` reads from the route's account but
+  may write to another profile's account when given an explicit
+  `target_profile`/`target_connection_id`. Copying between accounts is the
+  point of that tool, every profile already belongs to the same single
+  owner, and any MCP token can already reach every account through the
+  universal `/mcp` route — so this widens no trust boundary. It never
+  happens implicitly: without a target argument the copy stays in the
+  route's own account.
 
 ## Defense in depth on the admin surface
 
@@ -172,8 +182,14 @@ fresh Graph read is correct while a different participant's fresh Graph read
 ## Logging redaction
 
 `src/logging/logger.ts` maintains an explicit `pino` `redact` path list
-(`req.headers.authorization`, `req.headers.cookie`, `*.token`, `*.code`,
-`*.title`, `*.description`, `*.email`, etc.) and every log call site is
-expected to pass only the fields in `LogFields` — treat any log call that
-passes raw request/response bodies or Graph payloads as a bug to fix, not
-a style nit.
+(`*.token`, `*.code`, `*.title`, `*.description`, `*.email`, etc.) and every
+log call site is expected to pass only the fields in `LogFields` — treat any
+log call that passes raw request/response bodies or Graph payloads as a bug
+to fix, not a style nit.
+
+Request logs (`src/logging/httpLog.ts`) record only method, URL, user agent,
+client IP and status — no request or response headers, so no cookies or
+bearer tokens. Secret-bearing query parameters (`code`, `client_info`,
+`session_state`, `code_verifier`, tokens) are replaced with `[redacted]`
+in the logged URL; before this, Microsoft's sign-in `code` from
+`/oauth/owner/callback` was logged verbatim.

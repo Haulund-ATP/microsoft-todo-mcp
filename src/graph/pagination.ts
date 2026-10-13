@@ -18,6 +18,15 @@ export async function fetchAllPages<T>(
   initialRequest: { get(): Promise<{ value: T[]; "@odata.nextLink"?: string }> },
   options: FetchAllPagesOptions = {}
 ): Promise<T[]> {
+  return (await fetchAllPagesWithMeta(client, initialRequest, options)).items;
+}
+
+/** Same as fetchAllPages, but also reports whether `maxItems` cut the result short. */
+export async function fetchAllPagesWithMeta<T>(
+  client: Client,
+  initialRequest: { get(): Promise<{ value: T[]; "@odata.nextLink"?: string }> },
+  options: FetchAllPagesOptions = {}
+): Promise<{ items: T[]; truncated: boolean }> {
   const maxItems = options.maxItems ?? 500;
   const maxRetries = options.maxRetries ?? 5;
   const results: T[] = [];
@@ -34,7 +43,7 @@ export async function fetchAllPages<T>(
     request = client.api(nextLink) as unknown as typeof initialRequest;
   }
 
-  return results.slice(0, maxItems);
+  return { items: results.slice(0, maxItems), truncated: results.length > maxItems || Boolean(nextLink) };
 }
 
 export async function withThrottleRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {

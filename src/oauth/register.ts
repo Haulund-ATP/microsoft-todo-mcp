@@ -3,6 +3,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { OAuthClientsRepo, hashSecret } from "../storage/oauthRepo.js";
 import { TOKEN_ENDPOINT_AUTH_METHODS } from "./clientAuth.js";
+import { childLogger } from "../logging/logger.js";
+import { urlHost } from "../logging/mcpDiagnostics.js";
 import { audit } from "../logging/audit.js";
 
 /**
@@ -29,6 +31,11 @@ export const registerRouter = Router();
 registerRouter.post("/oauth/register", async (req, res) => {
   const parsed = registerRequestSchema.safeParse(req.body);
   if (!parsed.success) {
+    // Field paths only (no values), e.g. ["token_endpoint_auth_method"].
+    childLogger({ correlationId: req.correlationId, route: "/oauth/register" }).warn(
+      { rejectReason: "invalid_client_metadata", fields: parsed.error.issues.map((i) => i.path.join(".")).slice(0, 10) },
+      "client registration rejected"
+    );
     res.status(400).json({ error: "invalid_client_metadata", error_description: parsed.error.message });
     return;
   }
@@ -69,6 +76,16 @@ registerRouter.post("/oauth/register", async (req, res) => {
     outcome: "success",
     detail: `${clientId} auth=${authMethod}`,
   });
+  childLogger({ correlationId: req.correlationId, route: "/oauth/register" }).info(
+    {
+      oauthClientId: clientId,
+      clientName: parsed.data.client_name.slice(0, 60),
+      authMethod,
+      redirectHosts: parsed.data.redirect_uris.map((u) => urlHost(u)),
+      grantTypes: parsed.data.grant_types,
+    },
+    "client registered"
+  );
 
   res.status(201).json({
     client_id: clientId,

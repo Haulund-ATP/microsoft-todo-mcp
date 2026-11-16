@@ -39,10 +39,11 @@ export function requireBearer(kind: ResourceKind = "todo") {
       // Audience must be exactly this endpoint's resource: a To Do token is
       // rejected on /m365 and vice versa.
       const claims = await verifyAccessToken(token, audience);
-      req.mcpAuth = { subject: String(claims.sub), clientId: String(claims.client_id), scope: String(claims.scope) };
-      next();
+      req.mcpAuth = { subject: String(claims.sub), clientId: String(claims.client_id), scope: String(claims.scope) };      next();
     } catch (err) {
-      log.warn({ rejectReason: categorizeBearerError(err) }, "bearer token rejected");
+      // The expected audience (a public URL) shows which resource this route
+      // wanted, e.g. when a client presents a token for another profile.
+      log.warn({ rejectReason: categorizeBearerError(err), expectedAudience: audience }, "bearer token rejected");
       res.setHeader("WWW-Authenticate", `${challenge}, error="invalid_token"`);
       res.status(401).json({ error: "invalid_token" });
     }

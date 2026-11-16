@@ -76,24 +76,50 @@ const ENTITIES: Record<string, string> = { "&nbsp;": " ", "&amp;": "&", "&lt;": 
  * entities and collapses blank runs.
  */
 export function htmlToText(html: string): string {
-  // Every removal runs until nothing changes, so fragments that only form a
-  // block, comment or tag after an inner one is removed cannot survive.
-  let text = html;
+  // Non-content blocks are cut out by position (an unterminated one drops
+  // the rest), then line breaks are marked and every remaining tag is
+  // stripped until none are left.
+  let text = cutRanges(html, "<!--", "-->");
+  for (const tag of ["script", "style", "head"]) text = cutRanges(text, `<${tag}`, `</${tag}`, true);
+  text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n");
   let previous;
   do {
     previous = text;
-    text = text
-      .replace(/<(script|style|head)\b[\s\S]*?<\/\1\s*>/gi, "")
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n")
-      .replace(/<[^<>]*>/g, "");
+    text = text.replace(/<[^<>]*>/g, "");
   } while (text !== previous);
   text = text.replace(/&(nbsp|amp|lt|gt|quot|apos|#39);/g, (m) => ENTITIES[m] ?? m).replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)));
   return text
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/**
+ * Removes every range from `open` to `close` (case-insensitive). With
+ * `closeIsTag`, the range extends to the `>` that ends the closing tag. An
+ * unterminated range removes everything after its start.
+ */
+function cutRanges(text: string, open: string, close: string, closeIsTag = false): string {
+  const lower = text.toLowerCase();
+  let out = "";
+  let pos = 0;
+  for (;;) {
+    let start = lower.indexOf(open, pos);
+    // For tags, "<head" must not match "<header": require a boundary.
+    while (closeIsTag && start !== -1 && !/[\s>/]/.test(lower.charAt(start + open.length))) {
+      start = lower.indexOf(open, start + 1);
+    }
+    if (start === -1) return out + text.slice(pos);
+    out += text.slice(pos, start);
+    const end = lower.indexOf(close, start + open.length);
+    if (end === -1) return out;
+    let after = end + close.length;
+    if (closeIsTag) {
+      const gt = lower.indexOf(">", after);
+      after = gt === -1 ? text.length : gt + 1;
+    }
+    pos = after;
+  }
 }
 
 /** Caps long text so one tool result stays a reasonable size for the model. */

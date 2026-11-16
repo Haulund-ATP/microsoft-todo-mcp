@@ -28,6 +28,9 @@ describe("htmlToText", () => {
     expect(htmlToText("<<b>script>x")).not.toContain("<b>");
     expect(htmlToText("a<scr<script>x</script>ipt>alert(1)</script>b")).not.toMatch(/<script/i);
     expect(htmlToText("a<!<!--x-->-- hidden -->b")).not.toContain("<!--");
+    expect(htmlToText("<header>Nyhedsbrev</header><p>Indhold</p>")).toBe("Nyhedsbrev\nIndhold");
+    expect(htmlToText("<STYLE type='x'>a{}</STYLE >Tekst")).toBe("Tekst");
+    expect(htmlToText("før<script>uafsluttet")).toBe("før");
   });
 });
 

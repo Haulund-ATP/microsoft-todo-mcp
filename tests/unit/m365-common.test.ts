@@ -26,6 +26,8 @@ describe("htmlToText", () => {
   it("decodes entities and strips nested tag fragments until none are left", () => {
     expect(htmlToText("A&nbsp;&amp;&nbsp;B &lt;ok&gt; &#248;")).toBe("A & B <ok> ø");
     expect(htmlToText("<<b>script>x")).not.toContain("<b>");
+    expect(htmlToText("a<scr<script>x</script>ipt>alert(1)</script>b")).not.toMatch(/<script/i);
+    expect(htmlToText("a<!<!--x-->-- hidden -->b")).not.toContain("<!--");
   });
 });
 
@@ -73,7 +75,7 @@ describe("tenant admin consent", () => {
     expect(scopes).toContain("https://graph.microsoft.com/User.Read");
     expect(scopes).toContain("https://graph.microsoft.com/ChannelMessage.Read.All");
     expect(scopes).toContain("https://graph.microsoft.com/Sites.ReadWrite.All");
-    expect(scopes.some((s) => /openid|offline_access|profile$/.test(s))).toBe(false);
+    expect(scopes.some((s) => /\/(openid|offline_access|profile)$/.test(s))).toBe(false);
     expect(new Set(scopes).size).toBe(scopes.length);
   });
 

@@ -76,15 +76,18 @@ const ENTITIES: Record<string, string> = { "&nbsp;": " ", "&amp;": "&", "&lt;": 
  * entities and collapses blank runs.
  */
 export function htmlToText(html: string): string {
-  let text = html
-    .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n");
+  // Every removal runs until nothing changes, so fragments that only form a
+  // block, comment or tag after an inner one is removed cannot survive.
+  let text = html;
   let previous;
   do {
     previous = text;
-    text = text.replace(/<[^<>]*>/g, "");
+    text = text
+      .replace(/<(script|style|head)\b[\s\S]*?<\/\1\s*>/gi, "")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n")
+      .replace(/<[^<>]*>/g, "");
   } while (text !== previous);
   text = text.replace(/&(nbsp|amp|lt|gt|quot|apos|#39);/g, (m) => ENTITIES[m] ?? m).replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)));
   return text

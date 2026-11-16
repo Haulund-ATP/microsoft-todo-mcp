@@ -1,5 +1,6 @@
 import { loadEnv } from "../config/env.js";
 import { resourceUrl, type ResourceKind } from "./resources.js";
+import { TOKEN_ENDPOINT_AUTH_METHODS } from "./clientAuth.js";
 
 /**
  * OAuth Protected Resource Metadata (RFC 9728) and Authorization Server
@@ -31,7 +32,7 @@ export function buildAuthorizationServerMetadata() {
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none", "client_secret_basic"],
+    token_endpoint_auth_methods_supported: [...TOKEN_ENDPOINT_AUTH_METHODS],
     scopes_supported: ["mcp"],
     service_documentation: `${base}/docs`,
     // OIDC-discovery-compatible fields, in case a client probes

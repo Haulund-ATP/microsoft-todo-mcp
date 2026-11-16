@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { OAuthClientsRepo } from "../storage/oauthRepo.js";
+import { OAuthClientsRepo, hashSecret } from "../storage/oauthRepo.js";
+import { TOKEN_ENDPOINT_AUTH_METHODS } from "./clientAuth.js";
 import { audit } from "../logging/audit.js";
 
 /**
@@ -15,7 +16,10 @@ import { audit } from "../logging/audit.js";
 const registerRequestSchema = z.object({
   client_name: z.string().min(1).max(200),
   redirect_uris: z.array(z.string().url()).min(1).max(10),
-  token_endpoint_auth_method: z.literal("none").optional(),
+  // "none" = public client (PKCE only). Claude registers with the MCP Python
+  // SDK default "client_secret_post"; such clients get a secret that the
+  // token endpoint then requires (see clientAuth.ts).
+  token_endpoint_auth_method: z.enum(TOKEN_ENDPOINT_AUTH_METHODS).optional(),
   grant_types: z.array(z.enum(["authorization_code", "refresh_token"])).optional(),
   response_types: z.array(z.literal("code")).optional(),
 });
@@ -44,22 +48,35 @@ registerRouter.post("/oauth/register", async (req, res) => {
   }
 
   const clientId = randomUUID();
+  const authMethod = parsed.data.token_endpoint_auth_method ?? "none";
+  // The secret is returned once and only its SHA-256 hash is stored.
+  const clientSecret = authMethod === "none" ? undefined : randomBytes(32).toString("base64url");
+  const now = new Date();
   const repo = new OAuthClientsRepo();
   await repo.register({
     clientId,
     clientName: parsed.data.client_name,
     redirectUris: parsed.data.redirect_uris,
     registrationMethod: "dynamic",
-    createdAt: new Date().toISOString(),
+    createdAt: now.toISOString(),
+    tokenEndpointAuthMethod: authMethod,
+    ...(clientSecret ? { clientSecretHash: hashSecret(clientSecret) } : {}),
   });
 
-  audit({ action: "oauth.client_registered", correlationId: req.correlationId, outcome: "success", detail: clientId });
+  audit({
+    action: "oauth.client_registered",
+    correlationId: req.correlationId,
+    outcome: "success",
+    detail: `${clientId} auth=${authMethod}`,
+  });
 
   res.status(201).json({
     client_id: clientId,
+    client_id_issued_at: Math.floor(now.getTime() / 1000),
+    ...(clientSecret ? { client_secret: clientSecret, client_secret_expires_at: 0 } : {}),
     client_name: parsed.data.client_name,
     redirect_uris: parsed.data.redirect_uris,
-    token_endpoint_auth_method: "none",
+    token_endpoint_auth_method: authMethod,
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
   });

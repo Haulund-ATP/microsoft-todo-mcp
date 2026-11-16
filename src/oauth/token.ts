@@ -8,6 +8,7 @@ import { signAccessToken } from "./jwt.js";
 import { rotateRefreshToken } from "./refreshRotation.js";
 import { audit } from "../logging/audit.js";
 import { childLogger } from "../logging/logger.js";
+import { clientSecretAccepted, readClientCredentials } from "./clientAuth.js";
 
 /**
  * Token endpoint: authorization_code grant (with mandatory PKCE
@@ -26,14 +27,16 @@ const tokenRequestSchema = z.discriminatedUnion("grant_type", [
     grant_type: z.literal("authorization_code"),
     code: z.string().min(1),
     redirect_uri: z.string().url(),
-    client_id: z.string().min(1),
+    client_id: z.string().min(1).optional(),
     code_verifier: z.string().min(43).max(128),
     resource: z.string().url().optional(),
   }),
   z.object({
     grant_type: z.literal("refresh_token"),
     refresh_token: z.string().min(1),
-    client_id: z.string().min(1),
+    // Optional here because client_secret_basic clients send it in the
+    // Authorization header instead; readClientCredentials resolves it.
+    client_id: z.string().min(1).optional(),
     resource: z.string().url().optional(),
   }),
 ]);
@@ -52,12 +55,23 @@ tokenRouter.post("/oauth/token", async (req, res) => {
     reject(res, "invalid_request", "invalid_request", parsed.error.message);
     return;
   }
-  const body = parsed.data;
+  const credentials = readClientCredentials(req.header("authorization"), req.body as Record<string, unknown>);
+  if ("error" in credentials) {
+    reject(res, credentials.error, "invalid_client");
+    return;
+  }
+  // Downstream checks compare against body.client_id; make it the resolved id.
+  const body = { ...parsed.data, client_id: credentials.clientId };
   const env = loadEnv();
   const clientsRepo = new OAuthClientsRepo();
   const client = await clientsRepo.get(body.client_id);
   if (!client) {
     reject(res, "unknown_client", "invalid_client");
+    return;
+  }
+  if (!clientSecretAccepted(client, credentials.clientSecret)) {
+    log.warn({ rejectReason: credentials.clientSecret ? "client_secret_mismatch" : "client_secret_missing" }, "token request rejected");
+    res.status(401).json({ error: "invalid_client" });
     return;
   }
 

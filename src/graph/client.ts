@@ -1,6 +1,7 @@
 import { Client, MiddlewareFactory, type AuthenticationProvider, type Middleware } from "@microsoft/microsoft-graph-client";
 import { getAccessTokenForConnection } from "./upstreamOAuth.js";
 import { GraphDiagnosticsMiddleware } from "./diagnostics.js";
+import type { ModuleId } from "./modules.js";
 
 /**
  * Builds a Graph SDK client scoped to a single connection's access token.
@@ -8,11 +9,11 @@ import { GraphDiagnosticsMiddleware } from "./diagnostics.js";
  * so it can tag every request with a `client-request-id` and capture the
  * Graph-assigned `request-id` + status for diagnostic logging, without
  * otherwise altering the SDK's default middleware chain (auth/retry/
- * redirect/telemetry).
+ * redirect/telemetry). `module` picks which scopes the token carries.
  */
-export function createGraphClientForConnection(connectionId: string): Client {
+export function createGraphClientForConnection(connectionId: string, module: ModuleId = "todo"): Client {
   const authProvider: AuthenticationProvider = {
-    getAccessToken: () => getAccessTokenForConnection(connectionId),
+    getAccessToken: () => getAccessTokenForConnection(connectionId, module),
   };
   const chain: Middleware[] = MiddlewareFactory.getDefaultMiddlewareChain(authProvider);
   chain.splice(chain.length - 1, 0, new GraphDiagnosticsMiddleware() as unknown as Middleware);

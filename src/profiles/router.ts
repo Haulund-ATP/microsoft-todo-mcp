@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { requireBearer } from "../oauth/requireBearer.js";
 import { registerAllTools } from "../tools/registerAll.js";
-import { loadBoundConnectionIdForProfile } from "../tools/context.js";
+import { loadProfileContext } from "../tools/context.js";
 import { isValidAlias, RESERVED_ALIASES } from "../storage/profilesRepo.js";
 import { childLogger } from "../logging/logger.js";
 
@@ -37,7 +37,7 @@ async function handleMcpRequest(profileAlias: string, req: Request, res: Respons
     return;
   }
 
-  const boundConnectionId = await loadBoundConnectionIdForProfile(profileAlias);
+  const { boundConnectionId, modules, allowSend } = await loadProfileContext(profileAlias);
   if (profileAlias !== "mcp" && !boundConnectionId) {
     res.status(404).json({
       error: "profile_not_bound",
@@ -47,7 +47,7 @@ async function handleMcpRequest(profileAlias: string, req: Request, res: Respons
   }
 
   const server = new McpServer({ name: `${SERVER_NAME}:${profileAlias}`, version: SERVER_VERSION });
-  registerAllTools(server, { profileAlias, boundConnectionId, correlationId });
+  registerAllTools(server, { profileAlias, boundConnectionId, correlationId, modules, allowSend });
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {

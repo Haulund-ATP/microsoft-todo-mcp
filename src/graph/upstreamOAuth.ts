@@ -1,6 +1,16 @@
 import { randomBytes, createHash } from "node:crypto";
 import { loadEnv } from "../config/env.js";
-import { createMsalAppStateless, createMsalAppForConnection, GRAPH_SCOPES } from "./msalClient.js";
+import { createMsalAppStateless, createMsalAppForConnection } from "./msalClient.js";
+import {
+  DEFAULT_MODULES,
+  MODULES,
+  modulesCoveredByScopes,
+  parseModuleList,
+  scopesForModule,
+  scopesForModules,
+  serializeModuleList,
+  type ModuleId,
+} from "./modules.js";
 import { ConnectionsRepo } from "../storage/connectionsRepo.js";
 import { childLogger } from "../logging/logger.js";
 import { audit } from "../logging/audit.js";
@@ -34,11 +44,19 @@ function redirectUri(): string {
   return `${loadEnv().PUBLIC_BASE_URL.replace(/\/$/, "")}/oauth/microsoft/callback`;
 }
 
-/** Builds the Microsoft authorize URL the admin browser is redirected to. */
-export async function buildMicrosoftAuthorizeUrl(pkce: PkcePair, state: string): Promise<string> {
+/**
+ * Builds the Microsoft authorize URL the admin browser is redirected to.
+ * `modules` decides which scopes are requested; the default (To Do only)
+ * is exactly what this server asked for before modules existed.
+ */
+export async function buildMicrosoftAuthorizeUrl(
+  pkce: PkcePair,
+  state: string,
+  modules: readonly ModuleId[] = DEFAULT_MODULES
+): Promise<string> {
   const app = await createMsalAppStateless();
   return app.getAuthCodeUrl({
-    scopes: GRAPH_SCOPES,
+    scopes: scopesForModules(modules),
     redirectUri: redirectUri(),
     state,
     codeChallenge: pkce.challenge,
@@ -107,15 +125,17 @@ export async function completeMicrosoftSignIn(
   code: string,
   codeVerifier: string,
   correlationId: string,
-  reauthConnectionId?: string
+  reauthConnectionId?: string,
+  requestedModules: readonly ModuleId[] = DEFAULT_MODULES
 ): Promise<CompletedSignIn> {
   const log = childLogger({ correlationId });
   const app = await createMsalAppStateless();
+  const requestedScopes = scopesForModules(requestedModules);
   let result;
   try {
     result = await app.acquireTokenByCode({
       code,
-      scopes: GRAPH_SCOPES,
+      scopes: requestedScopes,
       redirectUri: redirectUri(),
       codeVerifier,
     });
@@ -133,11 +153,19 @@ export async function completeMicrosoftSignIn(
   const accountType: "personal" | "organizational" =
     tenantId === "9188040d-6c67-4c5b-b112-36a304b66dad" ? "personal" : "organizational";
 
+  // The token's scopes cover everything this user/tenant has consented to for
+  // Graph, not only what was asked for this time, so derive the modules from
+  // them. Keep previously granted modules on reauth: consent is not revoked
+  // by a narrower sign-in, and a stale entry only surfaces as a clear
+  // consent error at call time.
+  const covered = modulesCoveredByScopes(result.scopes ?? []);
+
   const repo = new ConnectionsRepo();
   let connection;
   if (reauthConnectionId) {
     const existing = await repo.get(reauthConnectionId);
     if (!existing) throw new Error(`Unknown connection for reauth: ${reauthConnectionId}`);
+    const grantedModules = serializeModuleList([...parseModuleList(existing.grantedModules), ...covered]);
     await repo.update(reauthConnectionId, {
       tenantId,
       msalHomeAccountId: account.homeAccountId,
@@ -146,6 +174,7 @@ export async function completeMicrosoftSignIn(
       maskedEmail: maskEmail(account.username),
       status: "active",
       errorDetail: undefined,
+      grantedModules,
     });
     connection = { ...existing, tenantId, msalHomeAccountId: account.homeAccountId, objectId: account.localAccountId };
   } else {
@@ -160,13 +189,14 @@ export async function completeMicrosoftSignIn(
       maskedEmail: maskEmail(account.username),
       lastUsedAt: null,
       status: "active",
+      grantedModules: serializeModuleList(covered),
     });
   }
 
   // Re-run acquisition through the connection-bound app so the cache
   // plugin persists it under the permanent connectionId/blob mapping.
   const boundApp = await createMsalAppForConnection(connection.connectionId, repo);
-  await boundApp.acquireTokenSilent({ account, scopes: GRAPH_SCOPES }).catch(async () => {
+  await boundApp.acquireTokenSilent({ account, scopes: requestedScopes }).catch(async () => {
     // First silent call may miss cache timing; force a cache write by
     // re-deserializing what the stateless app already has.
     const serialized = app.getTokenCache().serialize();
@@ -199,11 +229,34 @@ async function nextAvailableAlias(repo: ConnectionsRepo, accountType: "personal"
   return `${base}-${n}`;
 }
 
-/** Acquires a Graph access token for an existing connection, silently refreshing as needed. */
-export async function getAccessTokenForConnection(connectionId: string): Promise<string> {
+/** Thrown when a tool needs a module the connection has not consented to yet. */
+export class ModuleNotGrantedError extends Error {
+  constructor(
+    public readonly module: ModuleId,
+    public readonly connectionAlias: string
+  ) {
+    super(
+      `The Microsoft connection "${connectionAlias}" has not been granted the "${MODULES[module].label}" module yet. ` +
+        `The owner must add it from /accounts ("Add modules" on that connection) before this tool can be used.`
+    );
+    this.name = "ModuleNotGrantedError";
+  }
+}
+
+/**
+ * Acquires a Graph access token for an existing connection, silently
+ * refreshing as needed. Only the scopes of `module` (plus the base scopes)
+ * are requested. Connection status is only changed by the To Do module, so a
+ * failing M365 module can never mark a working To Do connection as broken.
+ */
+export async function getAccessTokenForConnection(connectionId: string, module: ModuleId = "todo"): Promise<string> {
   const repo = new ConnectionsRepo();
   const connection = await repo.get(connectionId);
   if (!connection) throw new Error(`Unknown connection: ${connectionId}`);
+  if (!parseModuleList(connection.grantedModules).includes(module)) {
+    throw new ModuleNotGrantedError(module, connection.alias);
+  }
+  const ownsStatus = module === "todo";
   const app = await createMsalAppForConnection(connectionId, repo);
   const accounts = await app.getTokenCache().getAllAccounts();
   const account = accounts.find((a) => a.homeAccountId === connection.msalHomeAccountId);
@@ -212,10 +265,11 @@ export async function getAccessTokenForConnection(connectionId: string): Promise
     throw new Error(`No cached account for connection ${connectionId}; re-authentication required.`);
   }
   try {
-    const result = await app.acquireTokenSilent({ account, scopes: GRAPH_SCOPES });
-    await repo.update(connectionId, { lastUsedAt: new Date().toISOString(), status: "active" });
+    const result = await app.acquireTokenSilent({ account, scopes: scopesForModule(module) });
+    await repo.update(connectionId, ownsStatus ? { lastUsedAt: new Date().toISOString(), status: "active" } : { lastUsedAt: new Date().toISOString() });
     return result.accessToken;
   } catch (err) {
+    if (!ownsStatus) throw err;
     if (isAdminConsentError(err)) {
       await repo.update(connectionId, { status: "consent_required" });
     } else {

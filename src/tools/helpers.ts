@@ -1,4 +1,5 @@
 import { createGraphClientForConnection } from "../graph/client.js";
+import type { ModuleId } from "../graph/modules.js";
 import { resolveConnectionId, type ToolContext } from "./context.js";
 import { toToolError } from "./errors.js";
 import { childLogger } from "../logging/logger.js";
@@ -13,20 +14,22 @@ export interface ToolTextResult {
  * Resolves the connection for this call, builds a Graph client for it, and
  * runs `fn`, converting any thrown error into a structured, LLM-readable
  * tool error result rather than letting the transport surface a raw stack
- * trace (which could leak internals).
+ * trace (which could leak internals). `module` decides which scopes the
+ * Graph token carries; it defaults to To Do so existing tools are unchanged.
  */
 export async function runGraphTool(
   ctx: ToolContext,
   toolName: string,
   explicitConnectionId: string | undefined,
-  fn: (client: ReturnType<typeof createGraphClientForConnection>, connectionId: string) => Promise<unknown>
+  fn: (client: ReturnType<typeof createGraphClientForConnection>, connectionId: string) => Promise<unknown>,
+  module: ModuleId = "todo"
 ): Promise<ToolTextResult> {
   const log = childLogger({ correlationId: ctx.correlationId, toolName, profileAlias: ctx.profileAlias });
   const started = Date.now();
   let connectionId: string | undefined;
   try {
     connectionId = await resolveConnectionId(ctx, explicitConnectionId);
-    const client = createGraphClientForConnection(connectionId);
+    const client = createGraphClientForConnection(connectionId, module);
     const result = await fn(client, connectionId);
     log.info({ resultStatus: "success", responseTimeMs: Date.now() - started }, "tool completed");
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };

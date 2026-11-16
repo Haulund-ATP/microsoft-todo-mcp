@@ -1,5 +1,5 @@
 import { isConsentRequired, isThrottled, toGraphErrorInfo } from "../graph/client.js";
-import { isAdminConsentError, buildAdminConsentError } from "../graph/upstreamOAuth.js";
+import { isAdminConsentError, buildAdminConsentError, ModuleNotGrantedError } from "../graph/upstreamOAuth.js";
 import { ConnectionsRepo } from "../storage/connectionsRepo.js";
 
 /** Structured content returned inside an MCP tool's isError result. */
@@ -11,6 +11,9 @@ export interface ToolErrorPayload {
 }
 
 export async function toToolError(err: unknown, connectionId?: string): Promise<ToolErrorPayload> {
+  if (err instanceof ModuleNotGrantedError) {
+    return { errorType: "consent_required", message: err.message };
+  }
   if (isAdminConsentError(err)) {
     let tenantId = "unknown";
     if (connectionId) {

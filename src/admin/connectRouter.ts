@@ -6,6 +6,7 @@ import { PendingUpstreamAuthRepo } from "../storage/oauthRepo.js";
 import { requireOwner } from "./requireOwner.js";
 import { requireCsrf } from "./csrf.js";
 import { childLogger } from "../logging/logger.js";
+import { parseModuleList, serializeModuleList, supportedModules, type ModuleId } from "../graph/modules.js";
 
 /**
  * Admin-only flow for connecting a new Microsoft account (or re-authorizing
@@ -19,20 +20,39 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
 
 export const connectRouter = Router();
 
+/** Reads `modules` from a query string or a repeated checkbox field. */
+function modulesFromQuery(value: unknown): ModuleId[] {
+  const raw = Array.isArray(value) ? value.join(",") : typeof value === "string" ? value : "";
+  return parseModuleList(raw);
+}
+
 connectRouter.get("/admin/connect/start", requireOwner, async (req, res) => {
   const pkce = generatePkce();
   const state = generateState() + "." + randomUUID();
   const reauthConnectionId = typeof req.query.reauth === "string" ? req.query.reauth : undefined;
+  let modules = modulesFromQuery(req.query.modules);
+  if (reauthConnectionId) {
+    const existing = await new ConnectionsRepo().get(reauthConnectionId);
+    if (!existing) {
+      res.status(404).send("Unknown connection.");
+      return;
+    }
+    // Re-request what the connection already has plus the new modules, and
+    // never ask a personal account for scopes Microsoft rejects for MSA
+    // (that would fail the whole sign-in, To Do included).
+    modules = supportedModules([...parseModuleList(existing.grantedModules), ...modules], existing.accountType);
+  }
   const now = Date.now();
   await new PendingUpstreamAuthRepo().store({
     state,
     kind: "connect",
     codeVerifier: pkce.verifier,
     reauthConnectionId,
+    requestedModules: serializeModuleList(modules),
     createdAt: new Date(now).toISOString(),
     expiresAt: new Date(now + PENDING_TTL_MS).toISOString(),
   });
-  const url = await buildMicrosoftAuthorizeUrl(pkce, state);
+  const url = await buildMicrosoftAuthorizeUrl(pkce, state, modules);
   res.redirect(url);
 });
 
@@ -56,7 +76,13 @@ connectRouter.get("/oauth/microsoft/callback", requireOwner, async (req, res) =>
   }
 
   try {
-    await completeMicrosoftSignIn(code, entry.codeVerifier, req.correlationId, entry.reauthConnectionId);
+    await completeMicrosoftSignIn(
+      code,
+      entry.codeVerifier,
+      req.correlationId,
+      entry.reauthConnectionId,
+      parseModuleList(entry.requestedModules)
+    );
     res.redirect("/accounts");
   } catch (err) {
     if (isAdminConsentError(err)) {

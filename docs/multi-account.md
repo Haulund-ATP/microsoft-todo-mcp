@@ -16,6 +16,25 @@ the universal `/mcp` endpoint with an explicit `connection_id`). A profile
 alias can only ever point at one connection at a time, but you can rebind
 it later (e.g. if you replace your work account).
 
+## Modules (Microsoft 365 beyond To Do)
+
+Both connections and profiles carry a module list (`src/graph/modules.ts`;
+plan in [`m365-expansion.md`](m365-expansion.md)):
+
+- `Connection.grantedModules` — what the account has consented to. Set at
+  sign-in from the granted token scopes; "Add modules" on `/accounts`
+  re-runs the sign-in with the extra scopes (incremental consent).
+- `ProfileBinding.modules` / `allowSend` — what the profile's MCP route
+  exposes, and whether send tools are registered.
+
+Rows written before modules existed have neither field and mean "To Do
+only, no send", so existing connections and profiles behave exactly as
+before. Every Graph token is requested with the base scopes plus the scopes
+of the one module the tool belongs to, so adding a module to one account can
+never break silent refresh for another. Personal Microsoft accounts are only
+offered the modules Microsoft supports for them. The universal `/mcp` route
+exposes every module (with an explicit `connection_id`) but never send tools.
+
 ## Reserved aliases
 
 `mcp`, `accounts`, `health`, `ready`, `version`, `.well-known` can never be

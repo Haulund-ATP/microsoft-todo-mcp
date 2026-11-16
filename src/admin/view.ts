@@ -1,5 +1,26 @@
 import type { Connection } from "../storage/types.js";
 import type { ProfileBinding } from "../storage/types.js";
+import { MODULE_IDS, MODULES, parseModuleList, type ModuleId } from "../graph/modules.js";
+
+function moduleNames(modules: readonly ModuleId[]): string {
+  return modules.map((m) => escapeHtml(MODULES[m].label)).join(", ") || "&mdash;";
+}
+
+/**
+ * Module checkboxes. `only` limits the choices (e.g. to what a connection
+ * has consented to, or what a personal account supports); `checked` pre-ticks.
+ */
+function moduleCheckboxes(options: { only?: readonly ModuleId[]; checked?: readonly ModuleId[] }): string {
+  const choices = MODULE_IDS.filter((m) => !options.only || options.only.includes(m));
+  return choices
+    .map((m) => {
+      const def = MODULES[m];
+      const notes = [def.personalSupported ? "" : "work/school only", def.adminConsent ? "needs admin consent" : ""].filter(Boolean).join(", ");
+      const checked = options.checked?.includes(m) ? " checked" : "";
+      return `<label style="display:inline-block;margin-right:0.75rem;"><input type="checkbox" name="modules" value="${m}"${checked}> ${escapeHtml(def.label)}${notes ? ` <small>(${escapeHtml(notes)})</small>` : ""}</label>`;
+    })
+    .join("\n");
+}
 
 /**
  * Server-rendered admin page (no client-side framework — this is a small,
@@ -33,11 +54,23 @@ export function renderAccountsPage(input: {
   const connectionsRows = connections
     .map((c) => {
       const boundProfiles = profiles.filter((p) => p.connectionId === c.connectionId).map((p) => p.profileAlias);
+      const granted = parseModuleList(c.grantedModules);
+      const addable = MODULE_IDS.filter((m) => !granted.includes(m) && (c.accountType === "organizational" || MODULES[m].personalSupported));
+      const addModulesForm = addable.length
+        ? `<details><summary>Add modules</summary>
+            <form method="get" action="/admin/connect/start">
+              <input type="hidden" name="reauth" value="${escapeHtml(c.connectionId)}">
+              ${moduleCheckboxes({ only: addable })}
+              <button type="submit">Sign in and grant</button>
+            </form>
+          </details>`
+        : "";
       return `<tr>
         <td>${escapeHtml(c.displayName)}<br><small>${escapeHtml(c.maskedEmail)}</small></td>
         <td>${escapeHtml(c.accountType)}</td>
         <td>${escapeHtml(c.alias)}</td>
         <td>${statusBadge(c.status)}</td>
+        <td>${moduleNames(granted)}${addModulesForm}</td>
         <td>${c.lastUsedAt ? escapeHtml(new Date(c.lastUsedAt).toLocaleString("en-DK")) : "never"}</td>
         <td>${boundProfiles.map(escapeHtml).join(", ") || "&mdash;"}</td>
         <td style="white-space:nowrap;">
@@ -68,7 +101,9 @@ export function renderAccountsPage(input: {
     .map(
       (p) => `<tr>
         <td><code>/mcp/${escapeHtml(p.profileAlias)}</code></td>
-        <td>${escapeHtml(p.connectionId)}</td>
+        <td>${escapeHtml(connections.find((c) => c.connectionId === p.connectionId)?.alias ?? p.connectionId)}</td>
+        <td>${moduleNames(parseModuleList(p.modules))}</td>
+        <td>${p.allowSend ? "yes" : "no"}</td>
         <td>
           <form method="post" action="/accounts/profiles/unbind/${escapeHtml(p.profileAlias)}">
             <input type="hidden" name="_csrf" value="${csrf}">
@@ -93,18 +128,26 @@ export function renderAccountsPage(input: {
 </style>
 </head><body>
 <h1>Microsoft To Do MCP — Accounts</h1>
-<p><a href="/admin/connect/start">+ Connect a new Microsoft account</a></p>
+<details>
+  <summary><strong>+ Connect a new Microsoft account</strong></summary>
+  <form method="get" action="/admin/connect/start">
+    <p>Choose the modules to grant. Personal Microsoft accounts (outlook.com/hotmail) only support the
+    modules not marked "work/school only" — picking one of those fails the sign-in.</p>
+    ${moduleCheckboxes({ checked: ["todo"] })}
+    <p><button type="submit">Sign in with Microsoft</button></p>
+  </form>
+</details>
 
 <h2>Connections</h2>
 <table>
-  <thead><tr><th>Account</th><th>Type</th><th>Alias</th><th>Status</th><th>Last used</th><th>Bound profiles</th><th>Actions</th></tr></thead>
-  <tbody>${connectionsRows || `<tr><td colspan="7">No connections yet.</td></tr>`}</tbody>
+  <thead><tr><th>Account</th><th>Type</th><th>Alias</th><th>Status</th><th>Modules</th><th>Last used</th><th>Bound profiles</th><th>Actions</th></tr></thead>
+  <tbody>${connectionsRows || `<tr><td colspan="8">No connections yet.</td></tr>`}</tbody>
 </table>
 
 <h2>Profile bindings</h2>
 <table>
-  <thead><tr><th>Route</th><th>Connection id</th><th></th></tr></thead>
-  <tbody>${profileRows || `<tr><td colspan="3">No profile bindings yet.</td></tr>`}</tbody>
+  <thead><tr><th>Route</th><th>Connection</th><th>Modules</th><th>Can send</th><th></th></tr></thead>
+  <tbody>${profileRows || `<tr><td colspan="5">No profile bindings yet.</td></tr>`}</tbody>
 </table>
 
 <h3>Bind a profile</h3>
@@ -117,6 +160,10 @@ export function renderAccountsPage(input: {
       ${connectionOptions}
     </select>
   </label>
+  <p>Modules this profile exposes (only modules the connection has been granted will work; work/school-only
+  modules are dropped for personal accounts). Binding an existing alias again replaces its settings.</p>
+  <p>${moduleCheckboxes({ checked: ["todo"] })}</p>
+  <p><label><input type="checkbox" name="allow_send"> Allow sending mail and Teams messages from this profile</label></p>
   <button type="submit">Bind</button>
 </form>
 

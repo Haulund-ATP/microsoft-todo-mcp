@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ConnectionsRepo } from "../storage/connectionsRepo.js";
 import { ProfilesRepo } from "../storage/profilesRepo.js";
 import type { ToolContext } from "./context.js";
+import { parseModuleList } from "../graph/modules.js";
 
 /** Account/profile discovery tools — always safe, read-only, no Graph calls. */
 export function registerAccountTools(server: McpServer, ctx: ToolContext): void {
@@ -29,6 +30,7 @@ export function registerAccountTools(server: McpServer, ctx: ToolContext): void 
                 displayName: c.displayName,
                 maskedEmail: c.maskedEmail,
                 status: c.status,
+                grantedModules: parseModuleList(c.grantedModules),
                 createdAt: c.createdAt,
                 lastUsedAt: c.lastUsedAt,
               })),

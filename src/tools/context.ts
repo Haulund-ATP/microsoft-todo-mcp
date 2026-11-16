@@ -1,5 +1,6 @@
 import { ConnectionsRepo } from "../storage/connectionsRepo.js";
 import { ProfilesRepo } from "../storage/profilesRepo.js";
+import { MODULE_IDS, parseModuleList, type ModuleId } from "../graph/modules.js";
 
 /**
  * Per-request/session context available to every tool handler. `boundConnectionId`
@@ -14,6 +15,38 @@ export interface ToolContext {
   profileAlias: string; // "mcp" for the universal route
   boundConnectionId?: string;
   correlationId: string;
+  /** Modules whose tools are registered on this endpoint. Defaults to To Do only. */
+  modules?: readonly ModuleId[];
+  /** Whether send tools (mail, Teams messages) are registered. Defaults to false. */
+  allowSend?: boolean;
+}
+
+export function hasModule(ctx: ToolContext, module: ModuleId): boolean {
+  return (ctx.modules ?? ["todo"]).includes(module);
+}
+
+export interface ProfileContext {
+  boundConnectionId?: string;
+  modules: ModuleId[];
+  allowSend: boolean;
+}
+
+/**
+ * Resolves what an MCP route exposes. A bound profile exposes the modules
+ * stored on its binding (To Do only for bindings made before modules
+ * existed). The universal /mcp route exposes every module — each call still
+ * needs an explicit connection_id and the connection must have consented to
+ * the module — but never send tools: sending is opt-in per bound profile.
+ */
+export async function loadProfileContext(profileAlias: string): Promise<ProfileContext> {
+  if (profileAlias === "mcp") return { modules: [...MODULE_IDS], allowSend: false };
+  const binding = await new ProfilesRepo().get(profileAlias);
+  if (!binding) return { modules: [], allowSend: false };
+  return {
+    boundConnectionId: binding.connectionId,
+    modules: parseModuleList(binding.modules),
+    allowSend: binding.allowSend === true,
+  };
 }
 
 export class UnresolvedConnectionError extends Error {
@@ -41,11 +74,4 @@ export async function resolveConnectionId(ctx: ToolContext, explicitConnectionId
   const connection = await repo.get(explicitConnectionId);
   if (!connection) throw new Error(`Unknown connection_id: ${explicitConnectionId}`);
   return explicitConnectionId;
-}
-
-export async function loadBoundConnectionIdForProfile(profileAlias: string): Promise<string | undefined> {
-  if (profileAlias === "mcp") return undefined;
-  const profilesRepo = new ProfilesRepo();
-  const binding = await profilesRepo.get(profileAlias);
-  return binding?.connectionId;
 }

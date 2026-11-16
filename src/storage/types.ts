@@ -19,12 +19,22 @@ export interface Connection {
   /** Name of the blob holding the AES-GCM-encrypted MSAL token cache. */
   tokenCacheBlobName: string;
   errorDetail?: string;
+  /**
+   * Comma-separated module ids this connection has consented to (see
+   * src/graph/modules.ts). Missing on rows created before modules existed,
+   * which means "todo" only.
+   */
+  grantedModules?: string;
 }
 
 export interface ProfileBinding {
   profileAlias: string; // "personal" | "work" | custom alias; also serves as route segment
   connectionId: string;
   createdAt: string;
+  /** Comma-separated module ids this profile exposes. Missing means "todo" only. */
+  modules?: string;
+  /** Whether send tools (mail, Teams messages) are registered on this profile. Missing means false. */
+  allowSend?: boolean;
 }
 
 export interface OAuthClient {
@@ -68,6 +78,8 @@ export interface PendingUpstreamAuth {
   returnTo?: string;
   /** connect only: set when this is a reauth of an existing connection rather than a brand new one. */
   reauthConnectionId?: string;
+  /** connect only: comma-separated module ids requested in this sign-in. */
+  requestedModules?: string;
   createdAt: string;
   expiresAt: string;
 }

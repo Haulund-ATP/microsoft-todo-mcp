@@ -7,6 +7,7 @@ import { requireCsrf, issueCsrfToken } from "./csrf.js";
 import { clearOwnerSessionCookie } from "./session.js";
 import { audit } from "../logging/audit.js";
 import { renderAccountsPage } from "./view.js";
+import { loadEnv } from "../config/env.js";
 
 export const accountsRouter = Router();
 
@@ -14,7 +15,37 @@ accountsRouter.get("/accounts", requireOwner, async (req, res) => {
   const [connections, profiles] = await Promise.all([new ConnectionsRepo().list(), new ProfilesRepo().list()]);
   const csrfToken = issueCsrfToken(req, res);
   res.set("Content-Type", "text/html; charset=utf-8");
-  res.send(renderAccountsPage({ connections, profiles, csrfToken }));
+  res.send(renderAccountsPage({ connections, profiles, csrfToken, publicBaseUrl: loadEnv().PUBLIC_BASE_URL }));
+});
+
+/**
+ * Copy buttons for the connector URLs on /accounts. Served as a same-origin
+ * file because the CSP (script-src 'self') blocks inline scripts. Static and
+ * contains no data, so it needs no owner session.
+ */
+export const COPY_SCRIPT = `document.addEventListener("click", async (event) => {
+  const button = event.target instanceof Element ? event.target.closest("button[data-copy]") : null;
+  if (!button) return;
+  const text = button.getAttribute("data-copy") || "";
+  const field = button.parentElement && button.parentElement.querySelector("input.copy-url");
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    if (field) { field.focus(); field.select(); document.execCommand("copy"); }
+  }
+  const label = button.textContent;
+  button.textContent = "Copied";
+  setTimeout(() => { button.textContent = label; }, 1500);
+});
+document.addEventListener("focusin", (event) => {
+  if (event.target instanceof HTMLInputElement && event.target.classList.contains("copy-url")) event.target.select();
+});
+`;
+
+accountsRouter.get("/accounts/copy.js", (_req, res) => {
+  res.set("Content-Type", "application/javascript; charset=utf-8");
+  res.set("Cache-Control", "public, max-age=3600");
+  res.send(COPY_SCRIPT);
 });
 
 accountsRouter.post("/accounts/logout", requireOwner, requireCsrf, (_req, res) => {

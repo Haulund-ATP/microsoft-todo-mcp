@@ -76,19 +76,20 @@ async function handleMcpRequest(kind: ResourceKind, profileAlias: string, req: R
 
 for (const kind of Object.keys(MOUNTS) as ResourceKind[]) {
   const mount = MOUNTS[kind];
-  profilesRouter.use(mount, requireBearer(kind));
-  profilesRouter.use(`${mount}/:alias`, requireBearer(kind));
 
-  profilesRouter.all(mount, (req, res) => {
+  // The bearer check is attached per route (not as a prefix middleware) so it
+  // sees req.params.alias: every /m365/{alias} is its own OAuth resource.
+  profilesRouter.all(mount, requireBearer(kind), (req, res) => {
     void handleMcpRequest(kind, "mcp", req, res);
   });
 
-  profilesRouter.all(`${mount}/:alias`, (req, res) => {
-    const alias = req.params.alias;
-    if (!alias || RESERVED_ALIASES.has(alias)) {
+  profilesRouter.all(`${mount}/:alias`, (req, res, next) => {
+    if (RESERVED_ALIASES.has(req.params.alias ?? "")) {
       res.status(404).json({ error: "unknown_profile" });
       return;
     }
-    void handleMcpRequest(kind, alias, req, res);
+    next();
+  }, requireBearer(kind), (req, res) => {
+    void handleMcpRequest(kind, req.params.alias!, req, res);
   });
 }

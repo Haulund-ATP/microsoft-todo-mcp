@@ -10,13 +10,16 @@ test.describe("OAuth discovery documents", () => {
     expect(body.authorization_servers).toContain(body.resource);
   });
 
-  test("Microsoft 365 is a separate protected resource on the same authorization server", async ({ request }) => {
+  test("Microsoft 365 profiles are separate protected resources on the same authorization server", async ({ request }) => {
     const root = await (await request.get("/.well-known/oauth-protected-resource")).json();
-    for (const path of ["/.well-known/oauth-protected-resource/m365", "/.well-known/oauth-protected-resource/m365/personal"]) {
-      const response = await request.get(path);
+    for (const [path, resource] of [
+      ["/.well-known/oauth-protected-resource/m365", `${root.resource}/m365`],
+      ["/.well-known/oauth-protected-resource/m365/personal", `${root.resource}/m365/personal`],
+    ]) {
+      const response = await request.get(path!);
       expect(response.ok()).toBeTruthy();
       const body = await response.json();
-      expect(body.resource).toBe(`${root.resource}/m365`);
+      expect(body.resource).toBe(resource);
       expect(body.authorization_servers).toEqual(root.authorization_servers);
     }
   });

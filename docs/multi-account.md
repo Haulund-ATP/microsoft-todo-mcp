@@ -27,9 +27,10 @@ Plan and module table: [`m365-expansion.md`](m365-expansion.md); registry in
   on rows from before modules existed, which means To Do only.
 - Every profile has **two endpoints**: `/mcp/{alias}` is To Do only (as
   always) and `/m365/{alias}` exposes every module its connection has been
-  granted. They are separate OAuth protected resources (`https://host` and
-  `https://host/m365`, see `src/oauth/resources.ts`), so a connector
-  authorized for one cannot call the other.
+  granted. They are separate OAuth protected resources (`https://host` for
+  every To Do profile, `https://host/m365/{alias}` per Microsoft 365
+  profile, see `src/oauth/resources.ts`), so a connector authorized for one
+  cannot call another.
 - `ProfileBinding.allowSend` — whether send tools (mail, Teams messages)
   are registered on `/m365/{alias}`. Missing means no. The universal
   `/m365` route never registers send tools.

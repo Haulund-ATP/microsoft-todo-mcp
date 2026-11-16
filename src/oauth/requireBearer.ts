@@ -19,8 +19,12 @@ export function requireBearer(kind: ResourceKind = "todo") {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const log = childLogger({ correlationId: req.correlationId, route: req.path });
     const header = req.header("authorization");
-    const audience = resourceUrl(kind);
-    const challenge = `Bearer resource_metadata="${protectedResourceMetadataUrl(kind)}"`;
+    // Microsoft 365 profiles are separate resources (see resources.ts); the
+    // route's :alias picks which. Mount this on routes, not as a prefix
+    // middleware, so req.params.alias is set.
+    const alias = kind === "m365" ? req.params.alias : undefined;
+    const audience = resourceUrl(kind, alias);
+    const challenge = `Bearer resource_metadata="${protectedResourceMetadataUrl(kind, alias)}"`;
 
     if (!header?.startsWith("Bearer ")) {
       // Logged at info, not warn: clients routinely probe without a token

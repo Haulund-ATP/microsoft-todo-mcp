@@ -88,7 +88,7 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
 
   const csrfToken = issueCsrfToken(req, res);
   res.set("Content-Type", "text/html; charset=utf-8");
-  res.send(renderConsentPage(client.clientName, profileAliases, params, csrfToken, target.kind));
+  res.send(renderConsentPage(client.clientName, profileAliases, params, csrfToken, target.kind, target.alias));
 });
 
 authorizeRouter.post("/oauth/authorize/approve", requireCsrf, async (req, res) => {
@@ -181,14 +181,19 @@ export function renderConsentPage(
   profileAliases: string[],
   params: z.infer<typeof authorizeQuerySchema>,
   csrfToken: string,
-  kind: ResourceKind = "todo"
+  kind: ResourceKind = "todo",
+  m365Alias?: string
 ): string {
-  const profiles = profileAliases.length
-    ? `<p>Adgangen gælder alle profiler på serveren: ${profileAliases.map((a) => `<strong>${escape(a)}</strong>`).join(", ")}.</p>`
-    : "";
+  // A /m365/{alias} grant is bound to that one profile's resource; To Do and
+  // the universal /m365 endpoint cover every profile.
+  const profiles = m365Alias
+    ? `<p>Adgangen gælder kun profilen <strong>${escape(m365Alias)}</strong>.</p>`
+    : profileAliases.length
+      ? `<p>Adgangen gælder alle profiler på serveren: ${profileAliases.map((a) => `<strong>${escape(a)}</strong>`).join(", ")}.</p>`
+      : "";
   const what =
     kind === "m365"
-      ? `din <strong>Microsoft 365</strong>-server: mail, kalender, kontakter, filer, SharePoint og Teams på de tilsluttede konti, inklusive at sende for dig fra profiler, hvor afsendelse er slået til.`
+      ? `din <strong>Microsoft 365</strong>-server: mail, kalender, kontakter, filer, SharePoint og Teams, inklusive at sende for dig, hvis afsendelse er slået til for profilen.`
       : `din Microsoft To Do-server.`;
   return `<!doctype html>
 <html lang="da"><head><meta charset="utf-8"><title>Giv ${escape(clientName)} adgang</title>

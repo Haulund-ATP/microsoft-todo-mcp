@@ -46,7 +46,11 @@ export const tokenRouter = Router();
 tokenRouter.post("/oauth/token", async (req, res) => {
   const log = childLogger({ correlationId: req.correlationId, route: "/oauth/token" });
   const reject = (r: Response, category: string, error: string, description?: string) => {
-    log.warn({ rejectReason: category }, "token request rejected");
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    log.warn(
+      { rejectReason: category, grantType: typeof b.grant_type === "string" ? b.grant_type.slice(0, 40) : undefined, oauthClientId: typeof b.client_id === "string" ? b.client_id.slice(0, 64) : undefined },
+      "token request rejected"
+    );
     r.status(400).json(description ? { error, error_description: description } : { error });
   };
 
@@ -62,6 +66,11 @@ tokenRouter.post("/oauth/token", async (req, res) => {
   }
   // Downstream checks compare against body.client_id; make it the resolved id.
   const body = { ...parsed.data, client_id: credentials.clientId };
+  const clientAuth = /^basic\s/i.test(req.header("authorization") ?? "")
+    ? "client_secret_basic"
+    : credentials.clientSecret
+      ? "client_secret_post"
+      : "none";
   const env = loadEnv();
   const clientsRepo = new OAuthClientsRepo();
   const client = await clientsRepo.get(body.client_id);
@@ -115,6 +124,7 @@ tokenRouter.post("/oauth/token", async (req, res) => {
     });
 
     audit({ action: "oauth.token_issued", correlationId: req.correlationId, outcome: "success", detail: "access_token" });
+    log.info({ grantType: "authorization_code", oauthClientId: record.clientId, clientAuth, resource: record.resource }, "token issued");
     res.json({
       access_token: accessToken,
       token_type: "Bearer",
@@ -166,6 +176,7 @@ tokenRouter.post("/oauth/token", async (req, res) => {
   });
 
   audit({ action: "oauth.token_issued", correlationId: req.correlationId, outcome: "success", detail: "refresh_rotation" });
+  log.info({ grantType: "refresh_token", oauthClientId: record.clientId, clientAuth, resource: record.resource, mode: outcome.mode }, "token issued");
   res.json({
     access_token: accessToken,
     token_type: "Bearer",

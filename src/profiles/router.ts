@@ -8,6 +8,7 @@ import { registerAllTools } from "../tools/registerAll.js";
 import { loadProfileContext } from "../tools/context.js";
 import { isValidAlias, RESERVED_ALIASES } from "../storage/profilesRepo.js";
 import { childLogger } from "../logging/logger.js";
+import { captureErrorBody, summarizeJsonRpc } from "../logging/mcpDiagnostics.js";
 
 /**
  * Mounts the MCP Streamable HTTP transport on two endpoint families, each its
@@ -40,12 +41,14 @@ async function handleMcpRequest(kind: ResourceKind, profileAlias: string, req: R
   const universal = profileAlias === "mcp";
 
   if (!universal && !isValidAlias(profileAlias)) {
+    log.warn({ rejectReason: "unknown_profile", endpoint: kind }, "mcp request rejected");
     res.status(404).json({ error: "unknown_profile" });
     return;
   }
 
   const { boundConnectionId, modules, allowSend } = await loadProfileContext(profileAlias, kind);
   if (!universal && !boundConnectionId) {
+    log.warn({ rejectReason: "profile_not_bound", endpoint: kind }, "mcp request rejected");
     res.status(404).json({
       error: "profile_not_bound",
       error_description: `Profile "${profileAlias}" exists as a valid alias but has no connection bound yet. Bind it from /accounts first.`,
@@ -56,6 +59,31 @@ async function handleMcpRequest(kind: ResourceKind, profileAlias: string, req: R
   const name = kind === "m365" ? `${SERVER_NAME}:m365:${profileAlias}` : `${SERVER_NAME}:${profileAlias}`;
   const server = new McpServer({ name, version: SERVER_VERSION });
   registerAllTools(server, { profileAlias, boundConnectionId, correlationId, modules, allowSend });
+
+  // Content-free trace of what the client asked for and how we answered, so
+  // connector problems (e.g. a client that never finishes connecting) can be
+  // read from the logs. See src/logging/mcpDiagnostics.ts.
+  const rpc = summarizeJsonRpc(req.body);
+  const errorBody = captureErrorBody(res);
+  const started = Date.now();
+  const mcpLog = {
+    endpoint: kind,
+    httpMethod: req.method,
+    rpc,
+    protocolVersionHeader: req.header("mcp-protocol-version"),
+    sessionIdHeader: Boolean(req.header("mcp-session-id")),
+    accept: req.header("accept")?.slice(0, 80),
+    oauthClientId: req.mcpAuth?.clientId,
+    toolsRegisteredFor: modules,
+    allowSend,
+  };
+  log.info({ mcp: mcpLog }, "mcp request");
+  res.on("finish", () => {
+    const status = res.statusCode;
+    const entry = { mcp: { endpoint: kind, httpMethod: req.method, methods: rpc?.methods, status, ms: Date.now() - started, error: status >= 400 ? errorBody() : undefined } };
+    if (status >= 400) log.warn(entry, "mcp response error");
+    else log.info(entry, "mcp response");
+  });
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {

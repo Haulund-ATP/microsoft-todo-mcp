@@ -10,7 +10,7 @@ import { issueCsrfToken, requireCsrf } from "../admin/csrf.js";
 import { audit } from "../logging/audit.js";
 import { childLogger } from "../logging/logger.js";
 import { canonicalResource, type ResourceKind } from "./resources.js";
-import { urlHost } from "../logging/mcpDiagnostics.js";
+import { clientRef, urlHost } from "../logging/mcpDiagnostics.js";
 
 /**
  * The MCP-side OAuth 2.1 authorization endpoint. Validates every parameter
@@ -77,7 +77,7 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
 
   const session = readOwnerSession(req);
   const flow = {
-    oauthClientId: params.client_id,
+    client: clientRef(params.client_id),
     clientName: client.clientName.slice(0, 60),
     resource: target.url,
     redirectHost: urlHost(params.redirect_uri),
@@ -150,7 +150,7 @@ authorizeRouter.post("/oauth/authorize/approve", requireCsrf, async (req, res) =
   });
 
   audit({ action: "oauth.token_issued", correlationId: req.correlationId, outcome: "success", detail: "auth_code" });
-  log.info({ oauthClientId: params.client_id, resource, redirectHost: urlHost(params.redirect_uri) }, "authorize: approved, code issued");
+  log.info({ client: clientRef(params.client_id), resource, redirectHost: urlHost(params.redirect_uri) }, "authorize: approved, code issued");
 
   const redirectUrl = new URL(params.redirect_uri);
   redirectUrl.searchParams.set("code", code);

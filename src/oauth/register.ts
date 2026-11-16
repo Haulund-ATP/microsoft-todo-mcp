@@ -4,7 +4,7 @@ import { z } from "zod";
 import { OAuthClientsRepo, hashSecret } from "../storage/oauthRepo.js";
 import { TOKEN_ENDPOINT_AUTH_METHODS } from "./clientAuth.js";
 import { childLogger } from "../logging/logger.js";
-import { urlHost } from "../logging/mcpDiagnostics.js";
+import { clientRef, urlHost } from "../logging/mcpDiagnostics.js";
 import { audit } from "../logging/audit.js";
 
 /**
@@ -78,7 +78,7 @@ registerRouter.post("/oauth/register", async (req, res) => {
   });
   childLogger({ correlationId: req.correlationId, route: "/oauth/register" }).info(
     {
-      oauthClientId: clientId,
+      client: clientRef(clientId),
       clientName: parsed.data.client_name.slice(0, 60),
       authMethod,
       redirectHosts: parsed.data.redirect_uris.map((u) => urlHost(u)),

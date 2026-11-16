@@ -76,6 +76,15 @@ export function captureErrorBody(res: Response, limit = 500): () => string | und
   return () => (captured ? captured : undefined);
 }
 
+/**
+ * Short reference to an OAuth client registration for correlating log lines
+ * (register → authorize → token → MCP calls). Client ids are public, but the
+ * first 8 characters are enough to follow one flow.
+ */
+export function clientRef(clientId: string): string {
+  return clientId.slice(0, 8);
+}
+
 /** Host of a URL, for logging redirect targets without query strings. */
 export function urlHost(url: string | undefined): string | undefined {
   if (!url) return undefined;

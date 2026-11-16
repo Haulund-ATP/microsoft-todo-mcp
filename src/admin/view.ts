@@ -51,13 +51,26 @@ function statusBadge(status: Connection["status"]): string {
   return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.8rem;color:white;background:${colors[status]}">${escapeHtml(status)}</span>`;
 }
 
+/**
+ * A full connector URL in a read-only field plus a copy button. The button is
+ * wired by /accounts/copy.js (the page's CSP forbids inline scripts); without
+ * JavaScript the field can still be selected and copied by hand.
+ */
+function copyableUrl(url: string): string {
+  const u = escapeHtml(url);
+  return `<span class="copy-row"><input class="copy-url" type="text" readonly value="${u}" aria-label="Connector URL" size="${Math.min(Math.max(url.length, 20), 48)}"><button type="button" data-copy="${u}">Copy</button></span><br>`;
+}
+
 export function renderAccountsPage(input: {
   connections: Connection[];
   profiles: ProfileBinding[];
   csrfToken: string;
+  /** PUBLIC_BASE_URL, used to show full connector URLs. */
+  publicBaseUrl: string;
 }): string {
   const { connections, profiles, csrfToken } = input;
   const csrf = escapeHtml(csrfToken);
+  const base = input.publicBaseUrl.replace(/\/$/, "");
 
   const connectionsRows = connections
     .map((c) => {
@@ -114,8 +127,8 @@ export function renderAccountsPage(input: {
       const connection = connections.find((c) => c.connectionId === p.connectionId);
       const m365Modules = connection ? parseModuleList(connection.grantedModules) : [];
       return `<tr>
-        <td><code>/mcp/${escapeHtml(p.profileAlias)}</code><br><small>To Do</small></td>
-        <td><code>/m365/${escapeHtml(p.profileAlias)}</code><br><small>${moduleNames(m365Modules)}; send: ${p.allowSend ? "yes" : "no"}</small></td>
+        <td>${copyableUrl(`${base}/mcp/${p.profileAlias}`)}<small>To Do</small></td>
+        <td>${copyableUrl(`${base}/m365/${p.profileAlias}`)}<small>${moduleNames(m365Modules)}; send: ${p.allowSend ? "yes" : "no"}</small></td>
         <td>${escapeHtml(connection?.alias ?? p.connectionId)}</td>
         <td>
           <form method="post" action="/accounts/profiles/unbind/${escapeHtml(p.profileAlias)}">
@@ -138,7 +151,10 @@ export function renderAccountsPage(input: {
   h1, h2 { margin-top: 2rem; }
   form.inline { display: inline; }
   .actions a, .actions button { margin-right: 0.25rem; }
+  .copy-row { display: inline-flex; gap: 0.25rem; align-items: center; margin-bottom: 0.25rem; max-width: 100%; }
+  .copy-url { font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; min-width: 0; }
 </style>
+<script src="/accounts/copy.js" defer></script>
 </head><body>
 <h1>Microsoft To Do MCP — Accounts</h1>
 <h2>Connect a Microsoft account</h2>

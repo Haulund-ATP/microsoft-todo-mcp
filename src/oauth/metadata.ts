@@ -10,10 +10,10 @@ import { TOKEN_ENDPOINT_AUTH_METHODS } from "./clientAuth.js";
  * endpoint) without any out-of-band configuration.
  */
 
-export function buildProtectedResourceMetadata(kind: ResourceKind = "todo") {
+export function buildProtectedResourceMetadata(kind: ResourceKind = "todo", alias?: string) {
   const base = loadEnv().PUBLIC_BASE_URL.replace(/\/$/, "");
   return {
-    resource: resourceUrl(kind),
+    resource: resourceUrl(kind, alias),
     authorization_servers: [base],
     bearer_methods_supported: ["header"],
     resource_documentation: `${base}/docs`,

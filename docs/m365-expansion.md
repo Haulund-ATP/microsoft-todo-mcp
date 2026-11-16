@@ -27,10 +27,13 @@ organizational. The existing **personal** (MSA) To Do connections must keep work
 3. **Two endpoints, two OAuth resources.** To Do stays To Do:
    - `/mcp`, `/mcp/{alias}` — To Do tools only, never send; tokens for resource `https://host`
      (unchanged, existing connectors keep working).
-   - `/m365`, `/m365/{alias}` — every module the bound connection has consented to (To Do
-     included); tokens for resource `https://host/m365`, metadata at
-     `/.well-known/oauth-protected-resource/m365`, and a consent page that says "Microsoft 365"
-     and mentions sending.
+   - `/m365/{alias}` — every module the bound connection has consented to (To Do included);
+     **one resource per profile**, `https://host/m365/{alias}`, metadata at
+     `/.well-known/oauth-protected-resource/m365/{alias}`, and a consent page that says
+     "Microsoft 365", names the profile and mentions sending. (Claude keeps one set of
+     credentials per resource; with a single shared `/m365` resource, connecting a second
+     M365 connector took the credentials away from the first.) The universal `/m365` endpoint
+     is its own resource, `https://host/m365`.
    Because the audiences differ, a token granted to a To Do connector (e.g. a family member's)
    is rejected on `/m365` and vice versa; the token endpoint always takes the resource from the
    approved code/refresh token, so one cannot be traded for the other. The profile only carries

@@ -26,10 +26,22 @@ describe("protected resources", () => {
     expect(protectedResourceMetadataUrl("todo")).toBe(`${base}/.well-known/oauth-protected-resource`);
   });
 
-  it("gives Microsoft 365 its own resource, audience and metadata URL", () => {
+  it("gives the universal Microsoft 365 endpoint its own resource, audience and metadata URL", () => {
     expect(resourceUrl("m365")).toBe(`${base}/m365`);
     expect(buildProtectedResourceMetadata("m365")).toMatchObject({ resource: `${base}/m365`, authorization_servers: [base] });
     expect(protectedResourceMetadataUrl("m365")).toBe(`${base}/.well-known/oauth-protected-resource/m365`);
+  });
+
+  it("gives every Microsoft 365 profile a resource of its own, so connectors never share credentials", () => {
+    expect(resourceUrl("m365", "haa")).toBe(`${base}/m365/haa`);
+    expect(resourceUrl("m365", "timewinder")).not.toBe(resourceUrl("m365", "haa"));
+    expect(buildProtectedResourceMetadata("m365", "haa")).toMatchObject({ resource: `${base}/m365/haa`, authorization_servers: [base] });
+    expect(protectedResourceMetadataUrl("m365", "haa")).toBe(`${base}/.well-known/oauth-protected-resource/m365/haa`);
+  });
+
+  it("keeps one shared To Do resource for every /mcp profile (unchanged)", () => {
+    expect(resourceUrl("todo", "nadia")).toBe(base);
+    expect(protectedResourceMetadataUrl("todo", "nadia")).toBe(`${base}/.well-known/oauth-protected-resource`);
   });
 
   it("maps client-supplied resources to the canonical one", () => {
@@ -37,14 +49,17 @@ describe("protected resources", () => {
     expect(canonicalResource(`${base}/`)).toEqual({ kind: "todo", url: base });
     expect(canonicalResource(`${base}/mcp/personal`)).toEqual({ kind: "todo", url: base });
     expect(canonicalResource(`${base}/m365`)).toEqual({ kind: "m365", url: `${base}/m365` });
-    expect(canonicalResource(`${base}/m365/work/`)).toEqual({ kind: "m365", url: `${base}/m365` });
+    expect(canonicalResource(`${base}/m365/work/`)).toEqual({ kind: "m365", url: `${base}/m365/work`, alias: "work" });
   });
 
-  it("rejects other hosts and look-alike paths", () => {
+  it("rejects other hosts, look-alike paths and invalid profile aliases", () => {
     expect(canonicalResource("https://evil.test")).toBeUndefined();
     expect(canonicalResource(`${base}.evil.test`)).toBeUndefined();
     expect(canonicalResource(`${base}/m365evil`)).toBeUndefined();
     expect(canonicalResource(`${base}/accounts`)).toBeUndefined();
+    expect(canonicalResource(`${base}/m365/Haa`)).toBeUndefined();
+    expect(canonicalResource(`${base}/m365/haa/extra`)).toBeUndefined();
+    expect(canonicalResource(`${base}/m365/mcp`)).toBeUndefined();
   });
 });
 
@@ -60,9 +75,40 @@ describe("consent page per resource", () => {
     expect(html).toContain("sende");
   });
 
+  it("says a profile grant covers only that profile", () => {
+    const html = renderConsentPage("Claude", ["haa", "nadia"], { ...params, resource: `${base}/m365/haa` }, "csrf", "m365", "haa");
+    expect(html).toContain("kun profilen <strong>haa</strong>");
+    expect(html).not.toContain("alle profiler");
+  });
+
   it("still says To Do on the To Do resource", () => {
     const html = renderConsentPage("Claude", [], { ...params, resource: base }, "csrf");
     expect(html).toContain("Microsoft To Do-server");
     expect(html).not.toContain("Microsoft 365");
+  });
+});
+
+describe("bearer challenge per Microsoft 365 profile", () => {
+  it("points an unauthenticated /m365/{alias} request at that profile's metadata", async () => {
+    const { requireBearer } = await import("../../src/oauth/requireBearer.js");
+    const headers: Record<string, string> = {};
+    const res = {
+      statusCode: 0,
+      setHeader: (k: string, v: string) => (headers[k.toLowerCase()] = v),
+      status(code: number) {
+        res.statusCode = code;
+        return res;
+      },
+      json: () => res,
+    };
+    const req = { params: { alias: "haa" }, path: "/m365/haa", header: () => undefined, correlationId: "c" };
+    let nextCalled = false;
+    await requireBearer("m365")(req as never, res as never, () => (nextCalled = true));
+    expect(nextCalled).toBe(false);
+    expect(res.statusCode).toBe(401);
+    expect(headers["www-authenticate"]).toBe(`Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/m365/haa"`);
+
+    await requireBearer("todo")({ ...req, params: { alias: "nadia" } } as never, res as never, () => undefined);
+    expect(headers["www-authenticate"]).toBe(`Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`);
   });
 });

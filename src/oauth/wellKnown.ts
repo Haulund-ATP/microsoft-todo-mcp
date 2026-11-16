@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { buildAuthorizationServerMetadata, buildProtectedResourceMetadata } from "./metadata.js";
 import { getPublicJwks } from "./signingKeys.js";
+import { isValidAlias } from "../storage/profilesRepo.js";
 
 export const wellKnownRouter = Router();
 
@@ -8,11 +9,19 @@ wellKnownRouter.get("/.well-known/oauth-protected-resource", (_req, res) => {
   res.json(buildProtectedResourceMetadata("todo"));
 });
 
-// The Microsoft 365 endpoint is its own protected resource (see resources.ts).
-// Clients that build the RFC 9728 path-inserted URL from the full endpoint
-// (/m365/{alias}) instead of following WWW-Authenticate land here too.
-wellKnownRouter.get(["/.well-known/oauth-protected-resource/m365", "/.well-known/oauth-protected-resource/m365/:alias"], (_req, res) => {
+// Microsoft 365: one protected resource per profile plus the universal one
+// (see resources.ts).
+wellKnownRouter.get("/.well-known/oauth-protected-resource/m365", (_req, res) => {
   res.json(buildProtectedResourceMetadata("m365"));
+});
+
+wellKnownRouter.get("/.well-known/oauth-protected-resource/m365/:alias", (req, res) => {
+  const alias = req.params.alias;
+  if (!isValidAlias(alias)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json(buildProtectedResourceMetadata("m365", alias));
 });
 
 wellKnownRouter.get("/.well-known/oauth-authorization-server", (_req, res) => {

@@ -1,6 +1,14 @@
 import type { Connection } from "../storage/types.js";
 import type { ProfileBinding } from "../storage/types.js";
-import { MODULE_IDS, MODULES, parseModuleList, type ModuleId } from "../graph/modules.js";
+import {
+  ALL_ORGANIZATIONAL_MODULES,
+  ALL_PERSONAL_MODULES,
+  MODULE_IDS,
+  MODULES,
+  parseModuleList,
+  serializeModuleList,
+  type ModuleId,
+} from "../graph/modules.js";
 
 function moduleNames(modules: readonly ModuleId[]): string {
   return modules.map((m) => escapeHtml(MODULES[m].label)).join(", ") || "&mdash;";
@@ -56,11 +64,15 @@ export function renderAccountsPage(input: {
       const boundProfiles = profiles.filter((p) => p.connectionId === c.connectionId).map((p) => p.profileAlias);
       const granted = parseModuleList(c.grantedModules);
       const addable = MODULE_IDS.filter((m) => !granted.includes(m) && (c.accountType === "organizational" || MODULES[m].personalSupported));
+      const adminConsentLink =
+        c.accountType === "organizational" && addable.length
+          ? `<br><a href="/admin/connect/admin-consent?reauth=${encodeURIComponent(c.connectionId)}">Admin consent for the whole tenant + add all modules</a>`
+          : "";
       const addModulesForm = addable.length
-        ? `<details><summary>Add modules</summary>
+        ? `${adminConsentLink}<details><summary>Add modules</summary>
             <form method="get" action="/admin/connect/start">
               <input type="hidden" name="reauth" value="${escapeHtml(c.connectionId)}">
-              ${moduleCheckboxes({ only: addable })}
+              ${moduleCheckboxes({ only: addable, checked: addable })}
               <button type="submit">Sign in and grant</button>
             </form>
           </details>`
@@ -129,11 +141,22 @@ export function renderAccountsPage(input: {
 </style>
 </head><body>
 <h1>Microsoft To Do MCP — Accounts</h1>
+<h2>Connect a Microsoft account</h2>
+<p><strong>Work/school account, everything:</strong> approve the app once for the whole organisation, then the
+account is connected with every module straight away.</p>
+<form method="get" action="/admin/connect/admin-consent">
+  <label>Tenant domain or id: <input type="text" name="tenant" placeholder="contoso.com" required></label>
+  <button type="submit">1. Admin consent (all modules) → 2. connect</button>
+</form>
+<p><small>Sign in as a global/application administrator of that tenant. If an administrator has already approved
+the app, <a href="/admin/connect/start?modules=${escapeHtml(serializeModuleList(ALL_ORGANIZATIONAL_MODULES))}">connect a work/school account with all modules</a> directly.</small></p>
+<p><strong>Personal Microsoft account</strong> (outlook.com/hotmail):
+<a href="/admin/connect/start?modules=${escapeHtml(serializeModuleList(ALL_PERSONAL_MODULES))}">connect with everything personal accounts support</a>
+or <a href="/admin/connect/start?modules=todo">To Do only</a>.</p>
 <details>
-  <summary><strong>+ Connect a new Microsoft account</strong></summary>
+  <summary>Choose modules yourself</summary>
   <form method="get" action="/admin/connect/start">
-    <p>Choose the modules to grant. Personal Microsoft accounts (outlook.com/hotmail) only support the
-    modules not marked "work/school only" — picking one of those fails the sign-in.</p>
+    <p>Personal accounts only support the modules not marked "work/school only" — picking one of those fails the sign-in.</p>
     ${moduleCheckboxes({ checked: ["todo"] })}
     <p><button type="submit">Sign in with Microsoft</button></p>
   </form>

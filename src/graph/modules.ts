@@ -9,7 +9,7 @@ import type { AccountType } from "../storage/types.js";
  * not consented to it (e.g. personal Microsoft accounts that only use To Do).
  */
 
-export const MODULE_IDS = ["todo", "mail", "calendar", "contacts", "files", "sites", "teams", "teams_channels"] as const;
+export const MODULE_IDS = ["todo", "mail", "calendar", "calendar_shared", "contacts", "files", "sites", "teams", "teams_channels"] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 export const BASE_SCOPES = ["User.Read", "openid", "profile", "offline_access"] as const;
@@ -28,6 +28,13 @@ export const MODULES: Record<ModuleId, ModuleDefinition> = {
   todo: { id: "todo", label: "To Do", scopes: ["Tasks.ReadWrite"], personalSupported: true, adminConsent: false },
   mail: { id: "mail", label: "Mail", scopes: ["Mail.ReadWrite", "Mail.Send"], personalSupported: true, adminConsent: false },
   calendar: { id: "calendar", label: "Calendar", scopes: ["Calendars.ReadWrite"], personalSupported: true, adminConsent: false },
+  calendar_shared: {
+    id: "calendar_shared",
+    label: "Shared calendars & meeting-time finder",
+    scopes: ["Calendars.ReadWrite.Shared"],
+    personalSupported: false,
+    adminConsent: false,
+  },
   contacts: {
     id: "contacts",
     label: "Contacts & people",
@@ -55,6 +62,21 @@ export const MODULES: Record<ModuleId, ModuleDefinition> = {
 
 /** Connections and profiles created before modules existed only ever had To Do. */
 export const DEFAULT_MODULES: readonly ModuleId[] = ["todo"];
+
+/** Everything Microsoft supports for each account type — the "connect with all modules" presets. */
+export const ALL_ORGANIZATIONAL_MODULES: readonly ModuleId[] = [...MODULE_IDS];
+export const ALL_PERSONAL_MODULES: readonly ModuleId[] = MODULE_IDS.filter((m) => MODULES[m].personalSupported);
+
+/**
+ * Fully qualified Graph permissions for a tenant-wide admin consent covering
+ * `modules` (v2 /adminconsent wants resource-qualified scopes; the OIDC
+ * scopes openid/profile/offline_access need no consent and are left out).
+ */
+export function adminConsentScopes(modules: readonly ModuleId[] = ALL_ORGANIZATIONAL_MODULES): string[] {
+  const graph = new Set<string>(["User.Read"]);
+  for (const m of modules) for (const s of MODULES[m].scopes) graph.add(s);
+  return [...graph].map((s) => `https://graph.microsoft.com/${s}`);
+}
 
 export function isModuleId(value: string): value is ModuleId {
   return (MODULE_IDS as readonly string[]).includes(value);

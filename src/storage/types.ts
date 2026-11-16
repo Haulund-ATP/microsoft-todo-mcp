@@ -74,7 +74,7 @@ export interface OAuthAuthorizationCode {
  */
 export interface PendingUpstreamAuth {
   state: string; // lookup key
-  kind: "owner_login" | "connect";
+  kind: "owner_login" | "connect" | "admin_consent";
   codeVerifier: string;
   /** owner_login only: where to redirect after a successful login. */
   returnTo?: string;

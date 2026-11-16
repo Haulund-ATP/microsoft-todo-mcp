@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { loadEnv } from "../config/env.js";
 import { createMsalAppStateless, createMsalAppForConnection } from "./msalClient.js";
 import {
+  adminConsentScopes,
   DEFAULT_MODULES,
   MODULES,
   modulesCoveredByScopes,
@@ -83,13 +84,30 @@ export function isAdminConsentError(err: unknown): err is Error & { errorCode?: 
   );
 }
 
+/** Prefix of `state` values used for tenant admin consent, so the callback can tell them apart without a session. */
+export const ADMIN_CONSENT_STATE_PREFIX = "ac.";
+
+/**
+ * Tenant-wide admin consent URL (Microsoft identity platform v2) for every
+ * module's permissions at once, so a tenant administrator approves this app
+ * a single time and every module can then be connected without further
+ * consent prompts. Works for multi-tenant apps without listing the
+ * permissions statically on the app registration.
+ */
+export function buildTenantAdminConsentUrl(tenant: string, state: string, modules?: readonly ModuleId[]): string {
+  const params = new URLSearchParams({
+    client_id: loadEnv().AZURE_CLIENT_ID,
+    scope: adminConsentScopes(modules).join(" "),
+    redirect_uri: redirectUri(),
+    state,
+  });
+  return `https://login.microsoftonline.com/${encodeURIComponent(tenant)}/v2.0/adminconsent?${params.toString()}`;
+}
+
 export function buildAdminConsentError(tenantId: string, _originalErrorMessage: string): AdminConsentRequiredError {
-  const env = loadEnv();
-  const clientId = env.AZURE_CLIENT_ID;
-  const adminConsentUrl =
-    `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/adminconsent` +
-    `?client_id=${encodeURIComponent(clientId)}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri())}`;
+  // No pending state behind this link (it may be forwarded to another
+  // person); the callback then just confirms and points the owner at /accounts.
+  const adminConsentUrl = buildTenantAdminConsentUrl(tenantId, `${ADMIN_CONSENT_STATE_PREFIX}link`);
   return {
     kind: "admin_consent_required",
     tenantId,

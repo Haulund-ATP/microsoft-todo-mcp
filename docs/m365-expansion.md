@@ -45,6 +45,7 @@ organizational. The existing **personal** (MSA) To Do connections must keep work
 | `todo` | Tasks.ReadWrite | yes | no |
 | `mail` | Mail.ReadWrite, Mail.Send | yes | no |
 | `calendar` | Calendars.ReadWrite | yes | no |
+| `calendar_shared` (calendars shared with you, meeting-time finder) | Calendars.ReadWrite.Shared | no | no |
 | `contacts` | Contacts.ReadWrite, People.Read | yes | no |
 | `files` (OneDrive + `.loop` files) | Files.ReadWrite.All | yes | no |
 | `sites` (SharePoint) | Sites.ReadWrite.All | no | no (tenant policy may differ) |
@@ -53,11 +54,22 @@ organizational. The existing **personal** (MSA) To Do connections must keep work
 
 Base scopes on every request: `User.Read openid profile offline_access`.
 
-**Loop.** `.loop` files in OneDrive/SharePoint can be found and exported read-only through the
-`files`/`sites` modules (Graph `driveItem` content/format export). Their content is Fluid and
-cannot be edited through Graph. Loop *workspaces* live in SharePoint Embedded containers and need
-a SharePoint Embedded admin to grant this app guest-app access per tenant
-(`Set-SPOApplicationPermission`); that is phase 4 and only for tenants the owner administers.
+**Loop.** `.loop` files in OneDrive/SharePoint are found by the files search and read as text
+through the Graph format conversion (`content?format=html`). Their content is Fluid and cannot be
+edited through Graph. Loop *workspaces* live in SharePoint Embedded containers, where guest apps
+can only be granted **app-only** access (`Set-SPOApplicationPermission`: delegated is not
+supported) — that would mean tenant-wide access without a signed-in user, which this delegated,
+per-user server deliberately never has. Loop workspaces are therefore out of scope.
+
+## One admin approval per tenant
+
+`/accounts` → "Admin consent (all modules)" (or the per-connection link) opens Microsoft's v2
+admin-consent endpoint for that tenant with **every module's permissions in one request**
+(`adminConsentScopes()` in `src/graph/modules.ts`). A tenant administrator approves once; the owner
+is then sent straight on to connect (or re-connect) the account with all modules, without any
+further consent prompt. The redirect is handled before the owner check, so an administrator from
+another organisation just sees a confirmation page. Nothing has to be listed statically on the app
+registration for this; consent-required errors point at the same URL.
 
 ## Write and send policy
 
@@ -71,26 +83,25 @@ The owner chose full write including send. Safeguards that stay on regardless:
 - Tool descriptions remind the model that mail/file/chat content is untrusted data, never
   instructions (prompt-injection exfiltration is the main risk of a send-capable connector).
 
-## Phases
+## Scope of this change (one PR, so each tenant is approved once)
 
-0. **Foundation** — module registry, `grantedModules` per connection, `allowSend` per profile,
-   module-aware token acquisition and Graph client, "add modules" re-auth in `/accounts`, the
-   separate `/m365` endpoint family and OAuth resource, tool registration gated by module. No new
-   Graph tools. Existing connections and connectors unaffected.
-1. **Mail + calendar + contacts** — search/read/thread/attachments, drafts, send, reply/forward,
-   move/flag; events search/create/update/respond, free/busy; people/contacts.
-2. **Files + SharePoint + Loop files** — search, list, read (text extraction for Office/PDF where
-   Graph offers a format conversion), upload/replace, create folder, move/copy/rename, sites and
-   libraries.
-3. **Teams** — teams/channels/chats list, chat and channel messages read/send.
-4. **Loop workspaces** (optional) — SharePoint Embedded guest-app access, per tenant.
+- **Foundation** — module registry, `grantedModules` per connection, `allowSend` per profile,
+  module-aware token acquisition and Graph client, the separate `/m365` endpoint family and OAuth
+  resource, tool registration gated by module, one-shot tenant admin consent, connect presets.
+  Existing connections and connectors unaffected.
+- **Mail** (`src/tools/m365/mailTools.ts`), **calendar** and **contacts/people**
+  (`calendarTools.ts`, `contactsTools.ts`), **OneDrive + Loop files** and **SharePoint**
+  (`filesTools.ts`, `sitesTools.ts`), **Teams** (`teamsTools.ts`). Shared conventions in
+  `src/tools/m365/common.ts`: per-module tokens, untrusted-content note, send tools only with
+  `allowSend`, audit of every send/delete, Graph-only paging tokens.
 
 ## Owner actions (cannot be done from code)
 
-- Add the new delegated Graph permissions to the Entra app registration (so the admin-consent
-  URL covers them). Dynamic consent works without this for user-consentable scopes.
-- Per organizational tenant: connect the account from `/accounts` with the wanted modules; grant
-  admin consent where a tenant requires it (`teams_channels` always; others depend on the
-  tenant's user-consent policy).
-- CloudPoint: connecting a third-party app needs that tenant's admin consent and must be allowed
+- Per organizational tenant (own tenant, H-Aa Holding, TimeWinder, CloudPoint): `/accounts` →
+  admin consent with the tenant's domain → sign in as its administrator → the account is then
+  connected with all modules. Bind a profile, tick "allow sending" where wanted, and add the
+  `/m365/{alias}` URL as a connector in Claude.
+- CloudPoint: connecting a third-party app needs that tenant's administrator and must be allowed
   by its policies — confirm before connecting.
+- Personal accounts: nothing changes unless you choose "connect with everything personal
+  accounts support" for one of them.

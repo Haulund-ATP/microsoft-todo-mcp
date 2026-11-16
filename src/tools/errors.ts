@@ -4,7 +4,7 @@ import { ConnectionsRepo } from "../storage/connectionsRepo.js";
 
 /** Structured content returned inside an MCP tool's isError result. */
 export interface ToolErrorPayload {
-  errorType: "consent_required" | "throttled" | "not_found" | "graph_error" | "validation_error" | "unknown";
+  errorType: "consent_required" | "send_not_allowed" | "throttled" | "not_found" | "graph_error" | "validation_error" | "unknown";
   message: string;
   retryAfterSeconds?: number;
   adminConsentUrl?: string;
@@ -13,6 +13,11 @@ export interface ToolErrorPayload {
 export async function toToolError(err: unknown, connectionId?: string): Promise<ToolErrorPayload> {
   if (err instanceof ModuleNotGrantedError) {
     return { errorType: "consent_required", message: err.message };
+  }
+  // Thrown by M365 tools when a call would email or message people but the
+  // profile does not allow sending (matched by name to avoid an import cycle).
+  if (err instanceof Error && err.name === "SendNotAllowedError") {
+    return { errorType: "send_not_allowed", message: err.message };
   }
   if (isAdminConsentError(err)) {
     let tenantId = "unknown";
@@ -36,7 +41,7 @@ export async function toToolError(err: unknown, connectionId?: string): Promise<
   }
   const info = toGraphErrorInfo(err);
   if (info.statusCode === 404) {
-    return { errorType: "not_found", message: "The requested list, task, or checklist item was not found." };
+    return { errorType: "not_found", message: "The requested item (list, task, message, event, file, chat …) was not found." };
   }
   if (err instanceof Error) {
     return { errorType: "unknown", message: err.message };

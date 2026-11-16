@@ -25,6 +25,8 @@ accountsRouter.post("/accounts/logout", requireOwner, requireCsrf, (_req, res) =
 const bindSchema = z.object({
   profile_alias: z.string().min(1).max(50),
   connection_id: z.string().min(1),
+  /** Applies to /m365/{alias} only; /mcp/{alias} is always To Do without send. */
+  allow_send: z.literal("on").optional(),
 });
 
 accountsRouter.post("/accounts/profiles/bind", requireOwner, requireCsrf, async (req, res) => {
@@ -37,8 +39,15 @@ accountsRouter.post("/accounts/profiles/bind", requireOwner, requireCsrf, async 
     res.status(400).send("That alias is reserved or invalid. Use lowercase letters, digits, and hyphens.");
     return;
   }
+  const connection = await new ConnectionsRepo().get(parsed.data.connection_id);
+  if (!connection) {
+    res.status(400).send("Unknown connection.");
+    return;
+  }
   const repo = new ProfilesRepo();
-  await repo.bind(parsed.data.profile_alias, parsed.data.connection_id);
+  await repo.bind(parsed.data.profile_alias, parsed.data.connection_id, {
+    allowSend: parsed.data.allow_send === "on",
+  });
   audit({
     action: "profile.bound",
     correlationId: req.correlationId,

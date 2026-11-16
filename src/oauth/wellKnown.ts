@@ -5,7 +5,14 @@ import { getPublicJwks } from "./signingKeys.js";
 export const wellKnownRouter = Router();
 
 wellKnownRouter.get("/.well-known/oauth-protected-resource", (_req, res) => {
-  res.json(buildProtectedResourceMetadata());
+  res.json(buildProtectedResourceMetadata("todo"));
+});
+
+// The Microsoft 365 endpoint is its own protected resource (see resources.ts).
+// Clients that build the RFC 9728 path-inserted URL from the full endpoint
+// (/m365/{alias}) instead of following WWW-Authenticate land here too.
+wellKnownRouter.get(["/.well-known/oauth-protected-resource/m365", "/.well-known/oauth-protected-resource/m365/:alias"], (_req, res) => {
+  res.json(buildProtectedResourceMetadata("m365"));
 });
 
 wellKnownRouter.get("/.well-known/oauth-authorization-server", (_req, res) => {

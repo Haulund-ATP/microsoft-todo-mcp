@@ -1,4 +1,5 @@
 import { loadEnv } from "../config/env.js";
+import { resourceUrl, type ResourceKind } from "./resources.js";
 
 /**
  * OAuth Protected Resource Metadata (RFC 9728) and Authorization Server
@@ -8,10 +9,10 @@ import { loadEnv } from "../config/env.js";
  * endpoint) without any out-of-band configuration.
  */
 
-export function buildProtectedResourceMetadata() {
+export function buildProtectedResourceMetadata(kind: ResourceKind = "todo") {
   const base = loadEnv().PUBLIC_BASE_URL.replace(/\/$/, "");
   return {
-    resource: base,
+    resource: resourceUrl(kind),
     authorization_servers: [base],
     bearer_methods_supported: ["header"],
     resource_documentation: `${base}/docs`,

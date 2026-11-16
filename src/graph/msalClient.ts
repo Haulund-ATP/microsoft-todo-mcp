@@ -8,6 +8,7 @@ import {
 import { loadEnv } from "../config/env.js";
 import { getSecretStore } from "../config/secrets.js";
 import { ConnectionsRepo } from "../storage/connectionsRepo.js";
+import { scopesForModule } from "./modules.js";
 
 /**
  * Builds a per-connection MSAL ConfidentialClientApplication whose token
@@ -22,7 +23,8 @@ import { ConnectionsRepo } from "../storage/connectionsRepo.js";
  */
 
 const AUTHORITY = "https://login.microsoftonline.com/common";
-export const GRAPH_SCOPES = ["Tasks.ReadWrite", "User.Read", "openid", "profile", "offline_access"];
+/** The To Do module's scopes — exactly what every token request used before modules existed. */
+export const GRAPH_SCOPES = scopesForModule("todo");
 
 async function getClientSecret(): Promise<string> {
   const env = loadEnv();

@@ -35,6 +35,17 @@ custom connector**, then:
 | Microsoft To Do – Arbejde | `https://todo.h-aa.dk/mcp/work` | Bound to your work/organizational connection |
 | Microsoft To Do – Universal | `https://todo.h-aa.dk/mcp` | Requires an explicit `connection_id` per tool call |
 
+## Microsoft 365 connectors (mail, calendar, files, Teams)
+
+Add a separate connector per account on the `/m365/...` endpoint. It is its own
+OAuth resource, so Claude runs a new authorization and the consent page says
+"Microsoft 365"; the To Do connectors above are untouched and cannot reach it.
+
+| Claude connector name | Remote MCP server URL | Notes |
+|---|---|---|
+| Microsoft 365 – Arbejde | `https://todo.h-aa.dk/m365/work` | Every module the connection has been granted (see `/accounts`); send tools only if the profile allows sending |
+| Microsoft 365 – Universal | `https://todo.h-aa.dk/m365` | Explicit `connection_id` per call; never send tools |
+
 ## Known Claude-specific behavior / limitations
 
 - Claude surfaces tool `isError` results (including the structured JSON

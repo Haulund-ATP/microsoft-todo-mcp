@@ -6,6 +6,7 @@ const PARTITION_KEY = "profile";
 /** Routes/aliases that a profile can never claim, since they are reserved endpoints. */
 export const RESERVED_ALIASES = new Set([
   "mcp",
+  "m365",
   "accounts",
   "health",
   "ready",
@@ -51,7 +52,11 @@ export class ProfilesRepo {
     }
   }
 
-  async bind(profileAlias: string, connectionId: string): Promise<ProfileBinding> {
+  async bind(
+    profileAlias: string,
+    connectionId: string,
+    options: { allowSend?: boolean } = {}
+  ): Promise<ProfileBinding> {
     if (!isValidAlias(profileAlias)) {
       throw new Error(
         `Invalid or reserved profile alias "${profileAlias}". Must match ${ALIAS_PATTERN} and not collide with reserved routes.`
@@ -61,6 +66,7 @@ export class ProfilesRepo {
       profileAlias,
       connectionId,
       createdAt: new Date().toISOString(),
+      ...(options.allowSend !== undefined ? { allowSend: options.allowSend } : {}),
     };
     await this.table().upsertEntity(
       { partitionKey: PARTITION_KEY, rowKey: profileAlias, ...binding },

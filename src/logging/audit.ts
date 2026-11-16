@@ -20,7 +20,10 @@ export type AuditAction =
   | "oauth.token_issued"
   | "oauth.token_revoked"
   | "oauth.refresh_reused" // replay-detection signal
-  | "oauth.refresh_concurrent"; // reuse inside the grace window, rotated instead of revoked
+  | "oauth.refresh_concurrent" // reuse inside the grace window, rotated instead of revoked
+  | "connection.admin_consent"
+  | "m365.send" // mail or Teams message sent (counts only)
+  | "m365.delete"; // mail, event, file or message deleted (ids/counts only)
 
 export interface AuditEvent {
   action: AuditAction;

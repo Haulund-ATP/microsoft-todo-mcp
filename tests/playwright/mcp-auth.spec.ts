@@ -9,6 +9,17 @@ test.describe("MCP endpoint authentication", () => {
     expect(challenge).toContain("resource_metadata=");
   });
 
+  test("/m365 endpoints challenge with their own protected-resource metadata", async ({ request }) => {
+    for (const path of ["/m365", "/m365/personal"]) {
+      const response = await request.post(path, { data: {} });
+      expect(response.status()).toBe(401);
+      expect(response.headers()["www-authenticate"]).toContain("/.well-known/oauth-protected-resource/m365");
+    }
+    // The To Do endpoint keeps pointing at the root resource.
+    const todo = await request.post("/mcp/personal", { data: {} });
+    expect(todo.headers()["www-authenticate"]).not.toContain("/m365");
+  });
+
   test("/mcp/personal rejects unauthenticated requests with 401", async ({ request }) => {
     const response = await request.post("/mcp/personal", { data: {} });
     expect(response.status()).toBe(401);

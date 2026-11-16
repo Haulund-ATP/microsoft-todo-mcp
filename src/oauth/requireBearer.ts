@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
-import { loadEnv } from "../config/env.js";
 import { verifyAccessToken } from "./jwt.js";
+import { protectedResourceMetadataUrl, resourceUrl, type ResourceKind } from "./resources.js";
 import { childLogger } from "../logging/logger.js";
 
 declare module "express-serve-static-core" {
@@ -15,12 +15,12 @@ declare module "express-serve-static-core" {
  * document so a compliant MCP client can (re)discover the authorization
  * server and re-initiate the OAuth flow, rather than failing silently.
  */
-export function requireBearer() {
+export function requireBearer(kind: ResourceKind = "todo") {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const log = childLogger({ correlationId: req.correlationId, route: req.path });
     const header = req.header("authorization");
-    const base = loadEnv().PUBLIC_BASE_URL.replace(/\/$/, "");
-    const challenge = `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`;
+    const audience = resourceUrl(kind);
+    const challenge = `Bearer resource_metadata="${protectedResourceMetadataUrl(kind)}"`;
 
     if (!header?.startsWith("Bearer ")) {
       // Logged at info, not warn: clients routinely probe without a token
@@ -32,7 +32,9 @@ export function requireBearer() {
     }
     const token = header.slice("Bearer ".length).trim();
     try {
-      const claims = await verifyAccessToken(token, base);
+      // Audience must be exactly this endpoint's resource: a To Do token is
+      // rejected on /m365 and vice versa.
+      const claims = await verifyAccessToken(token, audience);
       req.mcpAuth = { subject: String(claims.sub), clientId: String(claims.client_id), scope: String(claims.scope) };
       next();
     } catch (err) {

@@ -98,20 +98,21 @@ export function renderAccountsPage(input: {
     .join("\n");
 
   const profileRows = profiles
-    .map(
-      (p) => `<tr>
-        <td><code>/mcp/${escapeHtml(p.profileAlias)}</code></td>
-        <td>${escapeHtml(connections.find((c) => c.connectionId === p.connectionId)?.alias ?? p.connectionId)}</td>
-        <td>${moduleNames(parseModuleList(p.modules))}</td>
-        <td>${p.allowSend ? "yes" : "no"}</td>
+    .map((p) => {
+      const connection = connections.find((c) => c.connectionId === p.connectionId);
+      const m365Modules = connection ? parseModuleList(connection.grantedModules) : [];
+      return `<tr>
+        <td><code>/mcp/${escapeHtml(p.profileAlias)}</code><br><small>To Do</small></td>
+        <td><code>/m365/${escapeHtml(p.profileAlias)}</code><br><small>${moduleNames(m365Modules)}; send: ${p.allowSend ? "yes" : "no"}</small></td>
+        <td>${escapeHtml(connection?.alias ?? p.connectionId)}</td>
         <td>
           <form method="post" action="/accounts/profiles/unbind/${escapeHtml(p.profileAlias)}">
             <input type="hidden" name="_csrf" value="${csrf}">
             <button type="submit">Unbind</button>
           </form>
         </td>
-      </tr>`
-    )
+      </tr>`;
+    })
     .join("\n");
 
   return `<!doctype html>
@@ -145,9 +146,12 @@ export function renderAccountsPage(input: {
 </table>
 
 <h2>Profile bindings</h2>
+<p>Every profile has two endpoints: <code>/mcp/{alias}</code> is To Do only (as always), and
+<code>/m365/{alias}</code> exposes every module the connection has been granted. They are separate OAuth
+resources, so a connector authorized for one cannot use the other.</p>
 <table>
-  <thead><tr><th>Route</th><th>Connection</th><th>Modules</th><th>Can send</th><th></th></tr></thead>
-  <tbody>${profileRows || `<tr><td colspan="5">No profile bindings yet.</td></tr>`}</tbody>
+  <thead><tr><th>To Do endpoint</th><th>Microsoft 365 endpoint</th><th>Connection</th><th></th></tr></thead>
+  <tbody>${profileRows || `<tr><td colspan="4">No profile bindings yet.</td></tr>`}</tbody>
 </table>
 
 <h3>Bind a profile</h3>
@@ -160,10 +164,8 @@ export function renderAccountsPage(input: {
       ${connectionOptions}
     </select>
   </label>
-  <p>Modules this profile exposes (only modules the connection has been granted will work; work/school-only
-  modules are dropped for personal accounts). Binding an existing alias again replaces its settings.</p>
-  <p>${moduleCheckboxes({ checked: ["todo"] })}</p>
-  <p><label><input type="checkbox" name="allow_send"> Allow sending mail and Teams messages from this profile</label></p>
+  <p><label><input type="checkbox" name="allow_send"> Allow sending mail and Teams messages from
+  <code>/m365/{alias}</code></label> (binding an existing alias again replaces this setting)</p>
   <button type="submit">Bind</button>
 </form>
 

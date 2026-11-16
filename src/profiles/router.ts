@@ -3,17 +3,24 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { requireBearer } from "../oauth/requireBearer.js";
+import type { ResourceKind } from "../oauth/resources.js";
 import { registerAllTools } from "../tools/registerAll.js";
 import { loadProfileContext } from "../tools/context.js";
 import { isValidAlias, RESERVED_ALIASES } from "../storage/profilesRepo.js";
 import { childLogger } from "../logging/logger.js";
 
 /**
- * Mounts the MCP Streamable HTTP transport at:
- *   /mcp              — universal, requires explicit connection_id per tool call
- *   /mcp/personal      — bound to the "personal" profile's connection
- *   /mcp/work          — bound to the "work" profile's connection
- *   /mcp/{profileAlias} — any other validated, non-reserved alias
+ * Mounts the MCP Streamable HTTP transport on two endpoint families, each its
+ * own OAuth protected resource (see src/oauth/resources.ts):
+ *
+ *   To Do — exactly what this server always was:
+ *     /mcp                 universal, explicit connection_id per tool call
+ *     /mcp/{profileAlias}  bound to that profile's connection
+ *
+ *   Microsoft 365 — every module the connection has consented to (To Do,
+ *   mail, calendar, contacts, files, SharePoint, Teams):
+ *     /m365                universal, explicit connection_id, never send tools
+ *     /m365/{profileAlias} bound; send tools only if the profile allows it
  *
  * Each request builds a fresh McpServer + transport (stateless mode) since
  * Container Apps consumption-plan replicas can scale to zero between
@@ -23,22 +30,22 @@ import { childLogger } from "../logging/logger.js";
 const SERVER_NAME = "microsoft-todo-mcp";
 const SERVER_VERSION = process.env.npm_package_version ?? "0.1.0";
 
+const MOUNTS: Record<ResourceKind, string> = { todo: "/mcp", m365: "/m365" };
+
 export const profilesRouter = Router();
 
-profilesRouter.use("/mcp", requireBearer());
-profilesRouter.use("/mcp/:alias", requireBearer());
-
-async function handleMcpRequest(profileAlias: string, req: Request, res: Response): Promise<void> {
+async function handleMcpRequest(kind: ResourceKind, profileAlias: string, req: Request, res: Response): Promise<void> {
   const correlationId = req.correlationId ?? randomUUID();
   const log = childLogger({ correlationId, profileAlias, route: req.path });
+  const universal = profileAlias === "mcp";
 
-  if (profileAlias !== "mcp" && !isValidAlias(profileAlias)) {
+  if (!universal && !isValidAlias(profileAlias)) {
     res.status(404).json({ error: "unknown_profile" });
     return;
   }
 
-  const { boundConnectionId, modules, allowSend } = await loadProfileContext(profileAlias);
-  if (profileAlias !== "mcp" && !boundConnectionId) {
+  const { boundConnectionId, modules, allowSend } = await loadProfileContext(profileAlias, kind);
+  if (!universal && !boundConnectionId) {
     res.status(404).json({
       error: "profile_not_bound",
       error_description: `Profile "${profileAlias}" exists as a valid alias but has no connection bound yet. Bind it from /accounts first.`,
@@ -46,7 +53,8 @@ async function handleMcpRequest(profileAlias: string, req: Request, res: Respons
     return;
   }
 
-  const server = new McpServer({ name: `${SERVER_NAME}:${profileAlias}`, version: SERVER_VERSION });
+  const name = kind === "m365" ? `${SERVER_NAME}:m365:${profileAlias}` : `${SERVER_NAME}:${profileAlias}`;
+  const server = new McpServer({ name, version: SERVER_VERSION });
   registerAllTools(server, { profileAlias, boundConnectionId, correlationId, modules, allowSend });
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -58,7 +66,7 @@ async function handleMcpRequest(profileAlias: string, req: Request, res: Respons
   try {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
-  } catch (_err) {
+  } catch {
     log.error({ resultStatus: "error" }, "MCP transport error");
     if (!res.headersSent) {
       res.status(500).json({ error: "internal_error" });
@@ -66,15 +74,21 @@ async function handleMcpRequest(profileAlias: string, req: Request, res: Respons
   }
 }
 
-profilesRouter.all("/mcp", (req, res) => {
-  void handleMcpRequest("mcp", req, res);
-});
+for (const kind of Object.keys(MOUNTS) as ResourceKind[]) {
+  const mount = MOUNTS[kind];
+  profilesRouter.use(mount, requireBearer(kind));
+  profilesRouter.use(`${mount}/:alias`, requireBearer(kind));
 
-profilesRouter.all("/mcp/:alias", (req, res) => {
-  const alias = req.params.alias;
-  if (RESERVED_ALIASES.has(alias)) {
-    res.status(404).json({ error: "unknown_profile" });
-    return;
-  }
-  void handleMcpRequest(alias, req, res);
-});
+  profilesRouter.all(mount, (req, res) => {
+    void handleMcpRequest(kind, "mcp", req, res);
+  });
+
+  profilesRouter.all(`${mount}/:alias`, (req, res) => {
+    const alias = req.params.alias;
+    if (!alias || RESERVED_ALIASES.has(alias)) {
+      res.status(404).json({ error: "unknown_profile" });
+      return;
+    }
+    void handleMcpRequest(kind, alias, req, res);
+  });
+}

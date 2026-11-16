@@ -24,10 +24,18 @@ organizational. The existing **personal** (MSA) To Do connections must keep work
    that module from `/accounts` (re-auth with the union of scopes). Token acquisition for a tool
    uses *base + that module's scopes*, so the To Do path requests exactly what it does today.
    Rows without `grantedModules` are treated as `["todo"]`.
-3. **Modules per profile.** Each profile binding carries the modules it exposes and whether it
-   may send (mail, Teams messages). Missing → `["todo"]`, no send. A To Do-only profile (e.g. a
-   family member's) never sees mail tools. Tools are only registered for enabled modules, which
-   also keeps the tool list small.
+3. **Two endpoints, two OAuth resources.** To Do stays To Do:
+   - `/mcp`, `/mcp/{alias}` — To Do tools only, never send; tokens for resource `https://host`
+     (unchanged, existing connectors keep working).
+   - `/m365`, `/m365/{alias}` — every module the bound connection has consented to (To Do
+     included); tokens for resource `https://host/m365`, metadata at
+     `/.well-known/oauth-protected-resource/m365`, and a consent page that says "Microsoft 365"
+     and mentions sending.
+   Because the audiences differ, a token granted to a To Do connector (e.g. a family member's)
+   is rejected on `/m365` and vice versa; the token endpoint always takes the resource from the
+   approved code/refresh token, so one cannot be traded for the other. The profile only carries
+   `allowSend` (applies to `/m365/{alias}`; missing → false). The universal `/m365` route never
+   registers send tools.
 4. **Never guess the account** — unchanged: tools resolve their connection exactly as today.
 
 ## Modules
@@ -65,9 +73,10 @@ The owner chose full write including send. Safeguards that stay on regardless:
 
 ## Phases
 
-0. **Foundation** — module registry, `grantedModules` per connection, modules/allowSend per
-   profile, module-aware token acquisition and Graph client, "add modules" re-auth in `/accounts`,
-   tool registration gated by module. No new Graph tools. Existing connections unaffected.
+0. **Foundation** — module registry, `grantedModules` per connection, `allowSend` per profile,
+   module-aware token acquisition and Graph client, "add modules" re-auth in `/accounts`, the
+   separate `/m365` endpoint family and OAuth resource, tool registration gated by module. No new
+   Graph tools. Existing connections and connectors unaffected.
 1. **Mail + calendar + contacts** — search/read/thread/attachments, drafts, send, reply/forward,
    move/flag; events search/create/update/respond, free/busy; people/contacts.
 2. **Files + SharePoint + Loop files** — search, list, read (text extraction for Office/PDF where

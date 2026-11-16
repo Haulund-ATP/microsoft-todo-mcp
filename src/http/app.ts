@@ -64,7 +64,7 @@ export function createApp() {
   app.use(["/oauth/token", "/oauth/revoke"], tokenRateLimiter);
   app.use(["/oauth/authorize", "/oauth/register", "/oauth/owner", "/oauth/microsoft", "/admin/connect"], authRateLimiter);
   app.use("/accounts", adminRateLimiter);
-  app.use("/mcp", mcpRateLimiter);
+  app.use(["/mcp", "/m365"], mcpRateLimiter);
 
   // OAuth 2.1 authorization server + owner login + Microsoft connect flow.
   app.use(registerRouter);

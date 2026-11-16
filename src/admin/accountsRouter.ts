@@ -7,7 +7,6 @@ import { requireCsrf, issueCsrfToken } from "./csrf.js";
 import { clearOwnerSessionCookie } from "./session.js";
 import { audit } from "../logging/audit.js";
 import { renderAccountsPage } from "./view.js";
-import { parseModuleList, serializeModuleList, supportedModules } from "../graph/modules.js";
 
 export const accountsRouter = Router();
 
@@ -26,8 +25,7 @@ accountsRouter.post("/accounts/logout", requireOwner, requireCsrf, (_req, res) =
 const bindSchema = z.object({
   profile_alias: z.string().min(1).max(50),
   connection_id: z.string().min(1),
-  /** One checkbox value or several (repeated field). Missing → To Do only. */
-  modules: z.union([z.string(), z.array(z.string())]).optional(),
+  /** Applies to /m365/{alias} only; /mcp/{alias} is always To Do without send. */
   allow_send: z.literal("on").optional(),
 });
 
@@ -46,11 +44,8 @@ accountsRouter.post("/accounts/profiles/bind", requireOwner, requireCsrf, async 
     res.status(400).send("Unknown connection.");
     return;
   }
-  const rawModules = Array.isArray(parsed.data.modules) ? parsed.data.modules.join(",") : parsed.data.modules;
-  const modules = supportedModules(parseModuleList(rawModules), connection.accountType);
   const repo = new ProfilesRepo();
   await repo.bind(parsed.data.profile_alias, parsed.data.connection_id, {
-    modules: serializeModuleList(modules),
     allowSend: parsed.data.allow_send === "on",
   });
   audit({

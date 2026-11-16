@@ -31,9 +31,11 @@ export interface ProfileBinding {
   profileAlias: string; // "personal" | "work" | custom alias; also serves as route segment
   connectionId: string;
   createdAt: string;
-  /** Comma-separated module ids this profile exposes. Missing means "todo" only. */
-  modules?: string;
-  /** Whether send tools (mail, Teams messages) are registered on this profile. Missing means false. */
+  /**
+   * Whether send tools (mail, Teams messages) are registered on this
+   * profile's /m365/{alias} endpoint. Never applies to /mcp/{alias}, which is
+   * To Do only. Missing means false.
+   */
   allowSend?: boolean;
 }
 

@@ -9,6 +9,7 @@ import { readOwnerSession, isOwner } from "../admin/session.js";
 import { issueCsrfToken, requireCsrf } from "../admin/csrf.js";
 import { audit } from "../logging/audit.js";
 import { childLogger } from "../logging/logger.js";
+import { canonicalResource, type ResourceKind } from "./resources.js";
 
 /**
  * The MCP-side OAuth 2.1 authorization endpoint. Validates every parameter
@@ -36,16 +37,9 @@ function fullOriginalUrl(req: Request): string {
   return `${req.baseUrl}${req.path}?${new URLSearchParams(req.query as Record<string, string>).toString()}`;
 }
 
-/**
- * The canonical resource (no trailing slash) if `resource` names this
- * server, else undefined. The access token's audience is taken from the
- * stored code and verified exactly against this canonical form, so a
- * client sending "https://host/" must still get a token for "https://host".
- */
-function canonicalResource(resource: string): string | undefined {
-  const base = loadEnv().PUBLIC_BASE_URL.replace(/\/$/, "");
-  return resource.replace(/\/$/, "") === base ? base : undefined;
-}
+// The access token's audience is taken from the stored code, which holds the
+// canonical resource (see resources.ts) — so a client sending "https://host/"
+// still gets a token for "https://host", and /m365 gets its own audience.
 
 authorizeRouter.get("/oauth/authorize", async (req, res) => {
   const log = childLogger({ correlationId: req.correlationId, route: "/oauth/authorize" });
@@ -57,7 +51,8 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
   }
   const params = parsed.data;
 
-  if (!canonicalResource(params.resource)) {
+  const target = canonicalResource(params.resource);
+  if (!target) {
     log.warn({ rejectReason: "authorize_unknown_resource" }, "authorize request rejected");
     res.status(400).json({ error: "invalid_target", error_description: "Unknown resource." });
     return;
@@ -93,7 +88,7 @@ authorizeRouter.get("/oauth/authorize", async (req, res) => {
 
   const csrfToken = issueCsrfToken(req, res);
   res.set("Content-Type", "text/html; charset=utf-8");
-  res.send(renderConsentPage(client.clientName, profileAliases, params, csrfToken));
+  res.send(renderConsentPage(client.clientName, profileAliases, params, csrfToken, target.kind));
 });
 
 authorizeRouter.post("/oauth/authorize/approve", requireCsrf, async (req, res) => {
@@ -112,7 +107,7 @@ authorizeRouter.post("/oauth/authorize/approve", requireCsrf, async (req, res) =
     return;
   }
 
-  const resource = canonicalResource(params.resource);
+  const resource = canonicalResource(params.resource)?.url;
   if (!resource) {
     log.warn({ rejectReason: "approve_unknown_resource" }, "consent approval rejected");
     res.status(400).json({ error: "invalid_target" });
@@ -185,17 +180,22 @@ export function renderConsentPage(
   clientName: string,
   profileAliases: string[],
   params: z.infer<typeof authorizeQuerySchema>,
-  csrfToken: string
+  csrfToken: string,
+  kind: ResourceKind = "todo"
 ): string {
   const profiles = profileAliases.length
     ? `<p>Adgangen gælder alle profiler på serveren: ${profileAliases.map((a) => `<strong>${escape(a)}</strong>`).join(", ")}.</p>`
     : "";
+  const what =
+    kind === "m365"
+      ? `din <strong>Microsoft 365</strong>-server: mail, kalender, kontakter, filer, SharePoint og Teams på de tilsluttede konti, inklusive at sende for dig fra profiler, hvor afsendelse er slået til.`
+      : `din Microsoft To Do-server.`;
   return `<!doctype html>
 <html lang="da"><head><meta charset="utf-8"><title>Giv ${escape(clientName)} adgang</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 </head><body style="${PAGE_STYLE}">
 <h1>Giv adgang</h1>
-<p><strong>${escape(clientName)}</strong> beder om adgang til din Microsoft To Do-server.</p>
+<p><strong>${escape(clientName)}</strong> beder om adgang til ${what}</p>
 ${profiles}
 <form method="post" action="/oauth/authorize/approve">
   <input type="hidden" name="_csrf" value="${escape(csrfToken)}">

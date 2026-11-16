@@ -1,6 +1,7 @@
 import { ConnectionsRepo } from "../storage/connectionsRepo.js";
 import { ProfilesRepo } from "../storage/profilesRepo.js";
 import { MODULE_IDS, parseModuleList, type ModuleId } from "../graph/modules.js";
+import type { ResourceKind } from "../oauth/resources.js";
 
 /**
  * Per-request/session context available to every tool handler. `boundConnectionId`
@@ -32,19 +33,29 @@ export interface ProfileContext {
 }
 
 /**
- * Resolves what an MCP route exposes. A bound profile exposes the modules
- * stored on its binding (To Do only for bindings made before modules
- * existed). The universal /mcp route exposes every module — each call still
- * needs an explicit connection_id and the connection must have consented to
- * the module — but never send tools: sending is opt-in per bound profile.
+ * Resolves what an MCP route exposes. The endpoint family decides:
+ *
+ * - "todo" (/mcp, /mcp/{alias}) is always To Do only and never sends —
+ *   exactly what this server was before Microsoft 365 modules existed.
+ * - "m365" (/m365/{alias}) exposes every module the bound connection has
+ *   consented to, and send tools only if the profile allows sending. The
+ *   universal /m365 route exposes every module (each call names its
+ *   connection, which must have consented) but never send tools.
  */
-export async function loadProfileContext(profileAlias: string): Promise<ProfileContext> {
-  if (profileAlias === "mcp") return { modules: [...MODULE_IDS], allowSend: false };
+export async function loadProfileContext(profileAlias: string, kind: ResourceKind = "todo"): Promise<ProfileContext> {
+  const universal = profileAlias === "mcp";
+  if (universal) {
+    return { modules: kind === "m365" ? [...MODULE_IDS] : ["todo"], allowSend: false };
+  }
   const binding = await new ProfilesRepo().get(profileAlias);
   if (!binding) return { modules: [], allowSend: false };
+  if (kind === "todo") {
+    return { boundConnectionId: binding.connectionId, modules: ["todo"], allowSend: false };
+  }
+  const connection = await new ConnectionsRepo().get(binding.connectionId);
   return {
     boundConnectionId: binding.connectionId,
-    modules: parseModuleList(binding.modules),
+    modules: connection ? parseModuleList(connection.grantedModules) : [],
     allowSend: binding.allowSend === true,
   };
 }

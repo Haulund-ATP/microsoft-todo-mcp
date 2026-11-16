@@ -9,7 +9,7 @@ import type { AccountType } from "../storage/types.js";
  * not consented to it (e.g. personal Microsoft accounts that only use To Do).
  */
 
-export const MODULE_IDS = ["todo", "mail", "calendar", "calendar_shared", "contacts", "files", "sites", "teams", "teams_channels"] as const;
+export const MODULE_IDS = ["todo", "mail", "mail_rules", "calendar", "calendar_shared", "contacts", "files", "sites", "teams", "teams_channels"] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 export const BASE_SCOPES = ["User.Read", "openid", "profile", "offline_access"] as const;
@@ -27,6 +27,9 @@ export interface ModuleDefinition {
 export const MODULES: Record<ModuleId, ModuleDefinition> = {
   todo: { id: "todo", label: "To Do", scopes: ["Tasks.ReadWrite"], personalSupported: true, adminConsent: false },
   mail: { id: "mail", label: "Mail", scopes: ["Mail.ReadWrite", "Mail.Send"], personalSupported: true, adminConsent: false },
+  // Its own module rather than a scope added to "mail": connections that already
+  // consented to mail keep refreshing silently without MailboxSettings.ReadWrite.
+  mail_rules: { id: "mail_rules", label: "Mail inbox rules", scopes: ["MailboxSettings.ReadWrite"], personalSupported: true, adminConsent: false },
   calendar: { id: "calendar", label: "Calendar", scopes: ["Calendars.ReadWrite"], personalSupported: true, adminConsent: false },
   calendar_shared: {
     id: "calendar_shared",

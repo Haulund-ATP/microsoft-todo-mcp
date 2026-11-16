@@ -34,7 +34,7 @@ describe("module scopes", () => {
 
 describe("supportedModules", () => {
   it("drops work/school-only modules for personal accounts", () => {
-    expect(supportedModules([...MODULE_IDS], "personal")).toEqual(["todo", "mail", "calendar", "contacts", "files"]);
+    expect(supportedModules([...MODULE_IDS], "personal")).toEqual(["todo", "mail", "mail_rules", "calendar", "contacts", "files"]);
   });
 
   it("keeps everything for organizational accounts", () => {

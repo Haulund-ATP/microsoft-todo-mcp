@@ -84,7 +84,7 @@ describe("tenant admin consent", () => {
 
   it("has presets for everything each account type supports", () => {
     expect(ALL_ORGANIZATIONAL_MODULES).toEqual([...MODULE_IDS]);
-    expect(ALL_PERSONAL_MODULES).toEqual(["todo", "mail", "calendar", "contacts", "files"]);
+    expect(ALL_PERSONAL_MODULES).toEqual(["todo", "mail", "mail_rules", "calendar", "contacts", "files"]);
   });
 
   it("builds a single v2 admin consent URL for the tenant", () => {

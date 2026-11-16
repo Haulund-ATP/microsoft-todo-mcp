@@ -7,6 +7,7 @@ import { registerBulkRenameTools } from "./bulkRenameTools.js";
 import { registerBulkTools } from "./bulkTools.js";
 import { registerShoppingTools } from "./shoppingTools.js";
 import { registerMailTools } from "./m365/mailTools.js";
+import { registerMailRuleTools } from "./m365/mailRuleTools.js";
 import { registerCalendarTools } from "./m365/calendarTools.js";
 import { registerContactsTools } from "./m365/contactsTools.js";
 import { registerFilesTools } from "./m365/filesTools.js";
@@ -30,6 +31,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     registerShoppingTools(server, ctx);
   }
   if (hasModule(ctx, "mail")) registerMailTools(server, ctx);
+  if (hasModule(ctx, "mail_rules")) registerMailRuleTools(server, ctx);
   if (hasModule(ctx, "calendar")) registerCalendarTools(server, ctx);
   if (hasModule(ctx, "contacts")) registerContactsTools(server, ctx);
   if (hasModule(ctx, "files")) registerFilesTools(server, ctx);

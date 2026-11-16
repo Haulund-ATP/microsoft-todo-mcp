@@ -45,8 +45,14 @@ export interface OAuthClient {
   redirectUris: string[];
   registrationMethod: "dynamic" | "client_id_metadata_document" | "pre_registered";
   createdAt: string;
-  /** Only set for confidential clients; MCP connectors are expected to be public + PKCE. */
+  /**
+   * SHA-256 hex of the client secret; set for clients registered with
+   * client_secret_post/client_secret_basic (Claude does this), which must
+   * then present the secret at the token endpoint. Public clients have none.
+   */
   clientSecretHash?: string;
+  /** As registered; missing on clients registered before secrets were supported (all public). */
+  tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
 }
 
 export interface OAuthAuthorizationCode {

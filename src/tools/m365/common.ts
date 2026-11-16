@@ -81,7 +81,9 @@ export function htmlToText(html: string): string {
   // stripped until none are left.
   let text = cutRanges(html, "<!--", "-->");
   for (const tag of ["script", "style", "head"]) text = cutRanges(text, `<${tag}`, `</${tag}`, true);
-  text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n");
+  text = text
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote|header|footer|section|article|table|ul|ol)>/gi, "\n");
   let previous;
   do {
     previous = text;

@@ -9,6 +9,7 @@ import { rotateRefreshToken } from "./refreshRotation.js";
 import { audit } from "../logging/audit.js";
 import { childLogger } from "../logging/logger.js";
 import { clientSecretAccepted, readClientCredentials } from "./clientAuth.js";
+import { clientRef } from "../logging/mcpDiagnostics.js";
 
 /**
  * Token endpoint: authorization_code grant (with mandatory PKCE
@@ -48,7 +49,7 @@ tokenRouter.post("/oauth/token", async (req, res) => {
   const reject = (r: Response, category: string, error: string, description?: string) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
     log.warn(
-      { rejectReason: category, grantType: typeof b.grant_type === "string" ? b.grant_type.slice(0, 40) : undefined, oauthClientId: typeof b.client_id === "string" ? b.client_id.slice(0, 64) : undefined },
+      { rejectReason: category, grantType: typeof b.grant_type === "string" ? b.grant_type.slice(0, 40) : undefined, client: typeof b.client_id === "string" ? clientRef(b.client_id) : undefined },
       "token request rejected"
     );
     r.status(400).json(description ? { error, error_description: description } : { error });
@@ -124,7 +125,7 @@ tokenRouter.post("/oauth/token", async (req, res) => {
     });
 
     audit({ action: "oauth.token_issued", correlationId: req.correlationId, outcome: "success", detail: "access_token" });
-    log.info({ grantType: "authorization_code", oauthClientId: record.clientId, clientAuth, resource: record.resource }, "token issued");
+    log.info({ grantType: "authorization_code", client: clientRef(record.clientId), clientAuth, resource: record.resource }, "token issued");
     res.json({
       access_token: accessToken,
       token_type: "Bearer",
@@ -176,7 +177,7 @@ tokenRouter.post("/oauth/token", async (req, res) => {
   });
 
   audit({ action: "oauth.token_issued", correlationId: req.correlationId, outcome: "success", detail: "refresh_rotation" });
-  log.info({ grantType: "refresh_token", oauthClientId: record.clientId, clientAuth, resource: record.resource, mode: outcome.mode }, "token issued");
+  log.info({ grantType: "refresh_token", client: clientRef(record.clientId), clientAuth, resource: record.resource, mode: outcome.mode }, "token issued");
   res.json({
     access_token: accessToken,
     token_type: "Bearer",

@@ -158,8 +158,10 @@ connectRouter.get("/oauth/microsoft/callback", requireOwner, async (req, res) =>
   const { code, state, error, error_description: errorDescription } = req.query;
 
   if (error) {
-    log.warn({ rejectReason: String(error) }, "Microsoft connect returned error");
-    res.status(400).send(`Connection failed: ${String(errorDescription ?? error)}`);
+    // Microsoft's error text is logged, never reflected into the page
+    // (query strings are attacker-controllable: reflected XSS).
+    log.warn({ rejectReason: String(error).slice(0, 80), errorDescription: String(errorDescription ?? "").slice(0, 300) }, "Microsoft connect returned error");
+    res.status(400).type("text/plain").send("Connecting the Microsoft account failed. The reason is in the server log; try again from /accounts.");
     return;
   }
   if (typeof code !== "string" || typeof state !== "string") {

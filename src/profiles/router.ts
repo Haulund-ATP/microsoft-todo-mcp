@@ -8,7 +8,7 @@ import { registerAllTools } from "../tools/registerAll.js";
 import { loadProfileContext } from "../tools/context.js";
 import { isValidAlias, RESERVED_ALIASES } from "../storage/profilesRepo.js";
 import { childLogger } from "../logging/logger.js";
-import { captureErrorBody, summarizeJsonRpc } from "../logging/mcpDiagnostics.js";
+import { captureErrorBody, clientRef, summarizeJsonRpc } from "../logging/mcpDiagnostics.js";
 
 /**
  * Mounts the MCP Streamable HTTP transport on two endpoint families, each its
@@ -73,7 +73,7 @@ async function handleMcpRequest(kind: ResourceKind, profileAlias: string, req: R
     protocolVersionHeader: req.header("mcp-protocol-version"),
     sessionIdHeader: Boolean(req.header("mcp-session-id")),
     accept: req.header("accept")?.slice(0, 80),
-    oauthClientId: req.mcpAuth?.clientId,
+    client: req.mcpAuth ? clientRef(req.mcpAuth.clientId) : undefined,
     toolsRegisteredFor: modules,
     allowSend,
   };

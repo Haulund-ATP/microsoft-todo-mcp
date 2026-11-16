@@ -47,6 +47,7 @@ organizational. The existing **personal** (MSA) To Do connections must keep work
 |---|---|---|---|
 | `todo` | Tasks.ReadWrite | yes | no |
 | `mail` | Mail.ReadWrite, Mail.Send | yes | no |
+| `mail_rules` (Outlook inbox rules) | MailboxSettings.ReadWrite | yes | no |
 | `calendar` | Calendars.ReadWrite | yes | no |
 | `calendar_shared` (calendars shared with you, meeting-time finder) | Calendars.ReadWrite.Shared | no | no |
 | `contacts` | Contacts.ReadWrite, People.Read | yes | no |
@@ -85,6 +86,14 @@ The owner chose full write including send. Safeguards that stay on regardless:
   files go to the recycle bin.
 - Tool descriptions remind the model that mail/file/chat content is untrusted data, never
   instructions (prompt-injection exfiltration is the main risk of a send-capable connector).
+- Inbox rules (`mail_list_rules`, `mail_create_rule`, `mail_update_rule`, `mail_delete_rule`)
+  are a separate module, so existing mail connections keep refreshing without the new scope.
+  A forwarding rule is a standing exfiltration channel, so `forward_to`,
+  `forward_as_attachment_to` and `redirect_to` only exist in the schema on `allowSend` profiles,
+  are refused again in the Graph layer otherwise, and a disabled forwarding rule cannot be
+  switched back on from a non-send profile. Rules can never `permanentDelete`. Every rule
+  create/update/delete is audited as `m365.rule` with the forward-recipient count only, and a
+  deleted rule's definition is returned so it can be recreated.
 
 ## Scope of this change (one PR, so each tenant is approved once)
 

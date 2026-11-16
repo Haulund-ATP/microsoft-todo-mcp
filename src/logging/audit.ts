@@ -23,7 +23,8 @@ export type AuditAction =
   | "oauth.refresh_concurrent" // reuse inside the grace window, rotated instead of revoked
   | "connection.admin_consent"
   | "m365.send" // mail or Teams message sent (counts only)
-  | "m365.delete"; // mail, event, file or message deleted (ids/counts only)
+  | "m365.delete" // mail, event, file or message deleted (ids/counts only)
+  | "m365.rule"; // inbox rule created, changed or deleted (counts only, never names or conditions)
 
 export interface AuditEvent {
   action: AuditAction;

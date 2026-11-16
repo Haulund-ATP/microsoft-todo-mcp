@@ -34,7 +34,7 @@ export function runM365Tool(
   return runGraphTool(ctx, toolName, explicitConnectionId, fn, module);
 }
 
-export type M365AuditAction = "m365.send" | "m365.delete";
+export type M365AuditAction = "m365.send" | "m365.delete" | "m365.rule";
 
 /** Audit a send or delete. `detail` must be short and content-free, e.g. "mail recipients=3". */
 export function auditM365(ctx: ToolContext, action: M365AuditAction, connectionId: string, detail: string): void {
